@@ -79,13 +79,28 @@ const siteColors = [
 ];
 const personPalette = ['#60a5fa','#f59e0b','#34d399','#a78bfa','#f87171','#fb923c'];
 
-function loadSites() {
+// persisted blob = { sites, people }. people = global roster (kept even when a site/work is gone).
+function derivePeople(sites){
+  const set=new Set();
+  (sites||[]).forEach(s=>{
+    (s.members||[]).forEach(m=>m&&set.add(m));
+    (s.tasks||[]).forEach(t=>t.subtasks.forEach(st=>(st.members||[]).forEach(m=>{ if(m&&m!=='ไม่ระบุ') set.add(m); })));
+    (s.materials||[]).forEach(mt=>(mt.members||[]).forEach(m=>{ if(m&&m!=='ไม่ระบุ') set.add(m); }));
+  });
+  return [...set];
+}
+function applyData(d){  // accepts new shape {sites,people} or legacy bare sites array
+  if(Array.isArray(d)){ state.sites=d; state.people=derivePeople(d); }
+  else if(d && typeof d==='object'){ state.sites=d.sites||[]; state.people=Array.isArray(d.people)?d.people:derivePeople(state.sites); }
+}
+function snapshot(){ return { sites: state.sites, people: state.people }; }
+function loadInitial(){
   const saved = localStorage.getItem(LS_KEY);
-  if (saved) { try { return JSON.parse(saved); } catch(e) {} }
-  return JSON.parse(JSON.stringify(seedSites));
+  if (saved) { try { applyData(JSON.parse(saved)); return; } catch(e) {} }
+  state.sites = JSON.parse(JSON.stringify(seedSites)); state.people = derivePeople(state.sites);
 }
 function save() {
-  localStorage.setItem(LS_KEY, JSON.stringify(state.sites));   // local cache / offline copy
+  localStorage.setItem(LS_KEY, JSON.stringify(snapshot()));   // local cache / offline copy
   if (CLOUD) pushCloud();                                       // fire-and-forget upsert
 }
 
@@ -97,18 +112,18 @@ const CLOUD_ROW = 'shared';
 async function pushCloud() {
   if (!sb || pushing) return;
   pushing = true;
-  const { error } = await sb.from('app_state').upsert({ id: CLOUD_ROW, data: state.sites });
+  const { error } = await sb.from('app_state').upsert({ id: CLOUD_ROW, data: snapshot() });
   pushing = false;
   if (error) console.warn('cloud save failed:', error.message);
 }
 async function loadCloud() {
   const { data, error } = await sb.from('app_state').select('data').eq('id', CLOUD_ROW).maybeSingle();
   if (error) { console.warn('cloud load failed:', error.message); return; }
-  if (data && data.data) { state.sites = data.data; render(); }
-  else { await pushCloud(); }   // first run: seed the row from current local sites
+  if (data && data.data) { applyData(data.data); render(); }
+  else { await pushCloud(); }   // first run: seed the row from current local data
   sb.channel('app_state')
     .on('postgres_changes', { event: '*', schema: 'public', table: 'app_state', filter: `id=eq.${CLOUD_ROW}` },
-        payload => { if (!pushing && payload.new && payload.new.data) { state.sites = payload.new.data; render(); } })
+        payload => { if (!pushing && payload.new && payload.new.data) { applyData(payload.new.data); render(); } })
     .subscribe();
 }
 
@@ -161,8 +176,9 @@ const state = {
   expandedSites:{ s1:true }, expandedPersons:{},
   modal:null, fabOpen:false, validationMsg:'',
   form:{ name:'', deadline:today(), siteId:'', taskId:'', memberIds:[], newTaskName:'', taskPickerOpen:false, editId:'', qty:'', unit:'', newSiteName:'', newPersonName:'' },
-  sites: loadSites(),
+  sites: [], people: [],
 };
+loadInitial();
 
 // ── escaping ──
 const esc = s => String(s==null?'':s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -225,6 +241,18 @@ function openEditMaterial(id){
 }
 function markReceived(id){ const now=Date.now(); state.sites.forEach(s=>(s.materials||[]).forEach(m=>{ if(m.id===id){m.received=true;m.receivedAt=now;} })); save(); render(); }
 function deleteMaterial(id){ state.sites.forEach(s=>{ if(s.materials) s.materials=s.materials.filter(m=>m.id!==id); }); state.modal=null; save(); render(); }
+function deletePerson(name){
+  let pending=0;
+  state.sites.forEach(s=>s.tasks.forEach(t=>t.subtasks.forEach(st=>{ if(!st.done && (st.members||[]).includes(name)) pending++; })));
+  if(pending>0) return;   // guard: only remove people with no pending work (like sites)
+  state.people=state.people.filter(p=>p!==name);
+  state.sites.forEach(s=>{   // strip from done assignments + materials so they don't linger
+    s.tasks.forEach(t=>t.subtasks.forEach(st=>{ if(st.members) st.members=st.members.filter(m=>m!==name); }));
+    (s.materials||[]).forEach(mt=>{ if(mt.members) mt.members=mt.members.filter(m=>m!==name); });
+    if(s.members) s.members=s.members.filter(m=>m!==name);
+  });
+  save(); render();
+}
 function submitModal(){
   const f=state.form, m=state.modal;
   const fail = msg => { state.validationMsg=msg; render(); };
@@ -255,10 +283,10 @@ function submitModal(){
     const st=t.subtasks.find(st=>st.id===f.editId); st.name=f.name.trim(); st.deadline=f.deadline; st.members=[...f.memberIds];
     state.modal=null;
   } else if(m==='addMember'){
-    if(!f.siteId) return fail('กรุณาเลือกไซต์');
-    if(!f.name.trim()) return fail('กรุณาระบุชื่อสมาชิก');
-    state.sites.find(x=>x.id===f.siteId).members.push(f.name.trim());
-    state.modal=null;
+    if(!f.name.trim()) return fail('กรุณาระบุชื่อ');
+    const nm=f.name.trim();
+    if(!state.people.includes(nm)) state.people.push(nm);
+    state.modal=null; state.page='persons';
   } else if(m==='addMaterial'){
     if(!f.siteId) return fail('กรุณาเลือกไซต์');
     if(!f.name.trim()) return fail('กรุณาระบุชื่อวัสดุ');
@@ -294,13 +322,12 @@ function submitModal(){
     }
     const newPerson=f.newPersonName.trim();
     const wantTask=!!f.name.trim();
-    if(!site && (wantTask || newPerson)){           // need a bucket site
+    if(!site && wantTask){           // a task needs a site → bucket 'ไม่ระบุ'
       site=state.sites.find(x=>x.name==='ไม่ระบุ');
       if(!site){ const c=siteColors[state.sites.length%siteColors.length]; site={ id:uid(), name:'ไม่ระบุ', color:c.color, colorBg:c.colorBg, members:[], tasks:[], materials:[] }; state.sites.push(site); }
     }
-    if(!site) return fail('เลือกหรือพิมพ์ชื่อไซต์ก่อน');
     let did = !!f.newSiteName.trim();
-    if(newPerson && !site.members.includes(newPerson)){ site.members.push(newPerson); did=true; }
+    if(newPerson && !state.people.includes(newPerson)){ state.people.push(newPerson); did=true; }   // person → global roster
     if(wantTask){
       let members=[...f.memberIds]; if(newPerson && !members.includes(newPerson)) members.push(newPerson);
       let group;
@@ -311,8 +338,8 @@ function submitModal(){
       did=true;
     }
     if(!did) return fail('กรอกข้อมูลที่จะเพิ่มอย่างน้อย 1 อย่าง');
-    state.expandedSites[site.id]=true;
-    state.modal=null; state.page = wantTask ? 'dashboard' : 'sites';
+    if(site) state.expandedSites[site.id]=true;
+    state.modal=null; state.page = wantTask ? 'dashboard' : (f.newSiteName.trim() ? 'sites' : 'persons');
   }
   save(); render();
 }
@@ -339,7 +366,7 @@ const actions = {
   editSite:   el=>openEditSite(el.dataset.site),
   selectColor: el=>{ state.form.color=el.dataset.color; render(); },
   deleteSiteBtn: ()=>deleteSite(state.form.siteId),
-  deleteMember: el=>deleteMember(el.dataset.site, el.dataset.name),
+  deletePerson: el=>deletePerson(el.dataset.name),
   openAddSite:   ()=>openModal('addSite'),
   openAddTask:   ()=>openModal('addTask'),
   openAddSubtask:()=>openModal('addSubtask'),
@@ -541,26 +568,19 @@ function renderSites(){
           ${g.noSubtasks?`<div style="font-size:13px; color:#9ca3af; padding:12px 0; text-align:center;">ยังไม่มีงานย่อย</div>`:''}
         </div>`).join('');
 
-      if(site.members.length){
-        inner += `<div style="margin-bottom:14px; padding-top:4px;">
-          <div style="font-size:10px; font-weight:700; color:#9ca3af; text-transform:uppercase; letter-spacing:0.08em; margin-bottom:8px;">สมาชิก</div>
-          <div style="display:flex; flex-wrap:wrap; gap:6px;">
-          ${site.members.map(m=>`<div style="display:flex; align-items:center; gap:5px; background:#f1f5f9; border:1px solid #e2e8f0; border-radius:20px; padding:4px 6px 4px 10px; font-size:12px; color:#374151; font-weight:600;"><span>${esc(m)}</span><button data-act="deleteMember" data-site="${site.id}" data-name="${esc(m)}" style="width:16px; height:16px; border-radius:50%; border:none; background:transparent; cursor:pointer; color:#9ca3af; font-size:12px; line-height:1; padding:0;">×</button></div>`).join('')}
-          </div></div>`;
-      }
       inner += `<button data-act="addTask" data-site="${site.id}" style="width:100%; background:transparent; border:1px dashed #d1d5db; border-radius:8px; padding:10px; color:#9ca3af; font-size:13px; font-weight:600; cursor:pointer;">+ เพิ่มกลุ่มงาน</button>`;
     }
 
     const totalTasks=groups.reduce((a,g)=>a+g.pendingCount,0);
+    const sitePeople=[...new Set(site.tasks.flatMap(t=>t.subtasks.flatMap(st=>st.members||[])).filter(m=>m&&m!=='ไม่ระบุ'))];
     return `<div style="background:#fff; border:1px solid #e5e7eb; border-radius:14px; margin-bottom:12px; overflow:hidden; box-shadow:0 1px 4px rgba(0,0,0,0.05);">
       <div class="hov" data-act="toggleSite" data-id="${site.id}" style="padding:16px 18px; display:flex; align-items:center; gap:12px; cursor:pointer;">
         <div style="width:11px; height:11px; border-radius:50%; background:${site.color}; flex-shrink:0;"></div>
         <div style="flex:1; min-width:0;">
           <div style="font-size:16px; font-weight:700; color:#111827; margin-bottom:2px;">${esc(site.name)}</div>
-          <div style="font-size:11px; color:#9ca3af; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${esc(site.members.length?site.members.join(' · '):'ยังไม่มีสมาชิก')}</div>
+          <div style="font-size:11px; color:#9ca3af; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${esc(sitePeople.length?sitePeople.join(' · '):'ยังไม่มีคนในงานนี้')}</div>
         </div>
         <div style="display:flex; align-items:center; gap:8px; flex-shrink:0;">
-          <button data-act="addMember" data-site="${site.id}" title="เพิ่มสมาชิก" style="width:26px; height:26px; border-radius:50%; border:1px solid #e2e8f0; background:transparent; cursor:pointer; color:#6b7280; font-size:13px;">👤</button>
           <button data-act="editSite" data-site="${site.id}" title="แก้ไขไซต์" style="width:26px; height:26px; border-radius:50%; border:1px solid #e2e8f0; background:transparent; cursor:pointer; color:#6b7280; font-size:12px;">✏️</button>
           <span style="font-size:12px; font-weight:700; color:#6b7280; background:#f1f5f9; padding:3px 10px; border-radius:20px;">${totalTasks} งาน</span>
           <span style="font-size:20px; color:#9ca3af; font-weight:300;">${expanded?'▾':'›'}</span>
@@ -593,14 +613,15 @@ function siteSubRow(st){
 
 // ── PERSONS ──
 function renderPersons(){
-  const map={};
-  state.sites.forEach(site=>site.tasks.forEach(task=>task.subtasks.forEach(st=>{
-    const ms=st.members.length?st.members:['ไม่ระบุ'];
-    ms.forEach(m=>{ (map[m]=map[m]||[]).push({ ...st, site, task }); });
-  })));
   const f=state.filter;
-  const entries=Object.entries(map);
-  let html=entries.map(([name,items],idx)=>{
+  const map={};   // name -> assigned items across sites
+  state.sites.forEach(site=>site.tasks.forEach(task=>task.subtasks.forEach(st=>{
+    (st.members&&st.members.length?st.members:['ไม่ระบุ']).forEach(m=>{ (map[m]=map[m]||[]).push({ ...st, site, task }); });
+  })));
+  const names=[...new Set([...state.people, ...Object.keys(map)])];   // roster ∪ anyone assigned (e.g. 'ไม่ระบุ')
+  if(!names.length) return `<div style="text-align:center; padding:80px 20px; color:#9ca3af;"><div style="font-size:56px; margin-bottom:16px;">👷</div><div style="font-size:18px; font-weight:700; color:#6b7280;">ยังไม่มีรายชื่อ</div><div style="font-size:14px; margin-top:6px;">กดปุ่ม + เพื่อเพิ่มคน</div></div>`;
+  return names.map((name,idx)=>{
+    const items=map[name]||[];
     const parts=name.split(' ');
     const initial=parts.length>1?parts[1].charAt(0):parts[0].charAt(0);
     const color=personPalette[idx%personPalette.length];
@@ -608,24 +629,23 @@ function renderPersons(){
     const pending=items.filter(i=>!i.done).sort((a,b)=>a.deadline.localeCompare(b.deadline));
     const done=items.filter(i=>i.done).sort((a,b)=>(b.doneAt||0)-(a.doneAt||0));
     const rows = f==='done'?done : f==='pending'?pending : [...pending,...done];
-    if(rows.length===0) return '';
+    const canDelete = pending.length===0 && name!=='ไม่ระบุ';
     return `<div style="background:#fff; border:1px solid #e5e7eb; border-radius:14px; margin-bottom:12px; overflow:hidden; box-shadow:0 1px 4px rgba(0,0,0,0.05);">
       <div class="hov" data-act="togglePerson" data-id="${esc(name)}" style="padding:14px 18px; display:flex; align-items:center; gap:12px; cursor:pointer;">
         <div style="width:38px; height:38px; border-radius:50%; background:${color}; display:flex; align-items:center; justify-content:center; font-size:17px; font-weight:700; color:#080e1c; flex-shrink:0;">${esc(initial)}</div>
         <div style="flex:1; min-width:0;">
           <div style="font-size:15px; font-weight:700; color:#111827; margin-bottom:1px;">${esc(name)}</div>
-          <div style="font-size:11px; color:#9ca3af;">งานที่รับผิดชอบ</div>
+          <div style="font-size:11px; color:#9ca3af;">${pending.length?'งานที่รับผิดชอบ':'ว่าง — ไม่มีงานค้าง'}</div>
         </div>
         <div style="display:flex; align-items:center; gap:8px; flex-shrink:0;">
+          ${canDelete?`<button data-act="deletePerson" data-name="${esc(name)}" title="ลบรายชื่อ" style="width:26px; height:26px; border-radius:50%; border:1px solid #fecaca; background:transparent; cursor:pointer; color:#f87171; font-size:13px;">🗑</button>`:''}
           <span style="font-size:12px; font-weight:700; color:#6b7280; background:#f1f5f9; padding:3px 10px; border-radius:20px;">${pending.length} งาน</span>
           <span style="font-size:20px; color:#9ca3af; font-weight:300;">${expanded?'▾':'›'}</span>
         </div>
       </div>
-      ${expanded?`<div style="border-top:1px solid #f1f5f9; padding:4px 18px 12px;">${rows.map(personRow).join('')}</div>`:''}
+      ${expanded?`<div style="border-top:1px solid #f1f5f9; padding:4px 18px 12px;">${rows.length?rows.map(personRow).join(''):'<div style="font-size:13px; color:#9ca3af; padding:12px 0; text-align:center;">ไม่มีงานในตอนนี้</div>'}</div>`:''}
     </div>`;
   }).join('');
-  if(!html.trim()) html=`<div style="text-align:center; padding:80px 20px; color:#9ca3af;"><div style="font-size:56px; margin-bottom:16px;">👷</div><div style="font-size:18px; font-weight:700; color:#6b7280;">ยังไม่มีงาน</div></div>`;
-  return html;
 }
 function personRow(i){
   const dl=fmtDeadline(i.deadline);
@@ -729,9 +749,8 @@ function renderModal(){
 }
 function valHint(){ return state.validationMsg?`<div style="font-size:13px; color:#dc2626; margin-bottom:12px; padding:10px 14px; background:rgba(220,38,38,0.06); border-radius:8px; border:1px solid rgba(220,38,38,0.2);">${esc(state.validationMsg)}</div>`:''; }
 function memberChips(){
-  const s=state.sites.find(x=>x.id===state.form.siteId);
-  if(!s||!s.members.length) return `<div style="font-size:13px; color:#9ca3af; padding:4px 0;">ยังไม่มีสมาชิกในไซต์นี้</div>`;
-  return `<div style="display:flex; flex-wrap:wrap; gap:7px;">${s.members.map(mname=>{
+  if(!state.people.length) return `<div style="font-size:13px; color:#9ca3af; padding:4px 0;">ยังไม่มีรายชื่อ — พิมพ์ชื่อใหม่ด้านล่าง</div>`;
+  return `<div style="display:flex; flex-wrap:wrap; gap:7px;">${state.people.map(mname=>{
     const sel=state.form.memberIds.includes(mname);
     return `<button data-act="toggleFormMember" data-name="${esc(mname)}" style="padding:6px 13px; border-radius:20px; border:1px solid ${sel?'#93c5fd':'#e2e8f0'}; background:${sel?'#eff6ff':'#f9fafb'}; color:${sel?'#1d4ed8':'#6b7280'}; font-size:13px; font-weight:600; cursor:pointer; display:flex; align-items:center; gap:5px;">${sel?'<span style="font-size:11px;">✓</span>':''}<span>${esc(mname)}</span></button>`;
   }).join('')}</div>`;
@@ -769,7 +788,7 @@ function modalUnified(){
     <div style="margin-bottom:14px;"><label style="${labelStyle}">กำหนดส่ง</label><input type="date" data-field="deadline" value="${esc(f.deadline)}" style="${inputStyle} color-scheme:light;"></div>
 
     <div style="margin-bottom:16px;"><label style="${labelStyle}">ผู้รับผิดชอบ</label>
-      ${showSub && site.members.length?`<div style="margin-bottom:7px;">${memberChips()}</div>`:''}
+      ${state.people.length?`<div style="margin-bottom:7px;">${memberChips()}</div>`:''}
       <input data-field="newPersonName" value="${esc(f.newPersonName)}" placeholder="+ หรือพิมพ์ชื่อคนใหม่" style="${inputStyle}"></div>
 
     ${valHint()}
@@ -826,7 +845,7 @@ function modalForm(){
   const titles={ addSite:'เพิ่มไซต์ใหม่', addTask:'เพิ่มกลุ่มงาน', addSubtask:'เพิ่มงานย่อย', addMember:'เพิ่มสมาชิก' };
   const nameLbl={ addSite:'ชื่อไซต์ก่อสร้าง', addTask:'ชื่อกลุ่มงาน', addSubtask:'ชื่องานย่อย', addMember:'ชื่อ-นามสกุล สมาชิก' };
   const namePH={ addSite:'เช่น โครงการ The River Phase 2', addTask:'เช่น งานโครงสร้าง', addSubtask:'เช่น เทพื้น ชั้น 5', addMember:'เช่น นายสมชาย ใจดี' };
-  const needsSite = m==='addTask'||m==='addSubtask'||m==='addMember';
+  const needsSite = m==='addTask'||m==='addSubtask';
   const selectedSite=state.sites.find(s=>s.id===f.siteId);
   const taskOptions=selectedSite?selectedSite.tasks:[];
 
