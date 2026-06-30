@@ -107,10 +107,12 @@ function save() {
 // ── cloud (single JSON row, last-write-wins) ──
 // ponytail: one row holds the whole sites blob, RLS = authenticated-only. Split into per-row tables only if concurrent edits start clobbering each other.
 let sb = CLOUD ? supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
-let pushing = false, session = null;
+let pushing = false, session = null, cloudReady = false;
 const CLOUD_ROW = 'shared';
 async function pushCloud() {
-  if (!sb || pushing) return;
+  // guard: never overwrite the cloud until we've successfully read it once this session.
+  // stops a load failure (or stale local/seed data) from clobbering everyone's real data.
+  if (!sb || pushing || !cloudReady) return;
   pushing = true;
   const { error } = await sb.from('app_state').upsert({ id: CLOUD_ROW, data: snapshot() });
   pushing = false;
@@ -118,7 +120,8 @@ async function pushCloud() {
 }
 async function loadCloud() {
   const { data, error } = await sb.from('app_state').select('data').eq('id', CLOUD_ROW).maybeSingle();
-  if (error) { console.warn('cloud load failed:', error.message); return; }
+  if (error) { console.warn('cloud load failed — edits will NOT sync until reload (cloud data protected):', error.message); return; }
+  cloudReady = true;   // read succeeded → safe to write from now on
   if (data && data.data) { applyData(data.data); render(); }
   else { await pushCloud(); }   // first run: seed the row from current local data
   sb.channel('app_state')
