@@ -1,0 +1,667 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ตารางติดตามงาน</title>
+<link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #f8fafc; font-family:'Sarabun',sans-serif; color:#111827; }
+  @keyframes sheetUp { from { transform: translateY(60px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+  @keyframes fadeInBg { from { opacity: 0; } to { opacity: 1; } }
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 4px; }
+  button { font-family:'Sarabun',sans-serif; }
+  input, select { font-family:'Sarabun',sans-serif; }
+  .card:hover { box-shadow:0 2px 8px rgba(0,0,0,0.08); }
+  .hov:hover { background:rgba(0,0,0,0.025); }
+  .btnblue:hover { background:#3b82f6 !important; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+// ── CLOUD CONFIG ── เติม 2 ค่านี้เพื่อใช้ร่วมกัน online (เว้นว่าง = เก็บ localStorage เครื่องเดียว) ดู SUPABASE.md
+const SUPABASE_URL = 'https://wocqftaojrviqjprzrjw.supabase.co';      // เช่น https://abcdxyz.supabase.co
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndvY3FmdGFvanJ2aXFqcHJ6cmp3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI3NjI0NzIsImV4cCI6MjA5ODMzODQ3Mn0.O5RbRSCpb8o_baMgBOD9sMMz3WRazsQoZ6JDqM7rk7k'; // anon public key
+const CLOUD = !!(SUPABASE_URL && SUPABASE_ANON_KEY);
+
+// ponytail: full re-render on every state change — O(whole tree) per click, fine for this dataset; keyed diff only if it ever feels janky.
+const LS_KEY = 'task_tracker_v1_sites';
+const thaiMonths = ['ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'];
+
+const seedSites = [
+  { id:'s1', name:'คอนโด ริเวอร์ วิว', color:'#f59e0b', colorBg:'rgba(245,158,11,0.13)',
+    members:['นายวิชัย รักงาน','นางสาวพิมพ์ ใจดี','นายอนันต์ ก่อสร้าง'],
+    tasks:[
+      { id:'tk-s1-1', name:'งานโครงสร้าง', subtasks:[
+        { id:'st-1', name:'เทพื้น ชั้น 3', deadline:'2026-07-03', members:['นายวิชัย รักงาน'], done:false },
+        { id:'st-2', name:'ตรวจรับโครงสร้างเหล็ก ชั้น 4', deadline:'2026-07-12', members:['นายอนันต์ ก่อสร้าง'], done:false },
+      ]},
+      { id:'tk-s1-2', name:'งานระบบประกอบอาคาร', subtasks:[
+        { id:'st-3', name:'ติดตั้งระบบไฟฟ้า ชั้น 2', deadline:'2026-07-20', members:['นางสาวพิมพ์ ใจดี'], done:false },
+        { id:'st-4', name:'งานประปา ชั้น 3', deadline:'2026-07-25', members:['นายวิชัย รักงาน'], done:false },
+      ]},
+    ]},
+  { id:'s2', name:'ABC Tower', color:'#34d399', colorBg:'rgba(52,211,153,0.12)',
+    members:['นายสมพร ทำงาน','นายประสิทธิ์ มั่นคง'],
+    tasks:[
+      { id:'tk-s2-1', name:'งานสถาปัตยกรรม', subtasks:[
+        { id:'st-5', name:'ก่ออิฐผนัง ชั้น 5', deadline:'2026-07-08', members:['นายสมพร ทำงาน'], done:false },
+        { id:'st-6', name:'ทาสีผนัง ชั้น 4', deadline:'2026-07-18', members:['นายประสิทธิ์ มั่นคง'], done:false },
+      ]},
+      { id:'tk-s2-2', name:'งานตกแต่งภายใน', subtasks:[
+        { id:'st-7', name:'ปูกระเบื้องโถงต้อนรับ', deadline:'2026-08-01', members:['นายสมพร ทำงาน'], done:false },
+      ]},
+    ]},
+  { id:'s3', name:'สุขสันต์ วิลเลจ', color:'#a78bfa', colorBg:'rgba(167,139,250,0.12)',
+    members:['นายชัยชนะ สร้างสรรค์','นางรัตนา ดูแล'],
+    tasks:[
+      { id:'tk-s3-1', name:'งานป้องกันน้ำ', subtasks:[
+        { id:'st-8', name:'ทำกันซึมหลังคา บ้านเลขที่ 12-15', deadline:'2026-06-28', members:['นายชัยชนะ สร้างสรรค์'], done:false },
+        { id:'st-9', name:'ทดสอบระบบน้ำ', deadline:'2026-07-30', members:['นางรัตนา ดูแล'], done:false },
+      ]},
+      { id:'tk-s3-2', name:'งานภูมิทัศน์', subtasks:[
+        { id:'st-10', name:'ปลูกต้นไม้พื้นที่ส่วนกลาง', deadline:'2026-08-10', members:['นางรัตนา ดูแล'], done:false },
+      ]},
+    ]},
+];
+const siteColors = [
+  { color:'#f59e0b', colorBg:'rgba(245,158,11,0.13)' },
+  { color:'#34d399', colorBg:'rgba(52,211,153,0.12)' },
+  { color:'#a78bfa', colorBg:'rgba(167,139,250,0.12)' },
+  { color:'#60a5fa', colorBg:'rgba(96,165,250,0.12)' },
+  { color:'#f87171', colorBg:'rgba(248,113,113,0.12)' },
+  { color:'#fb923c', colorBg:'rgba(251,146,60,0.12)' },
+];
+const personPalette = ['#60a5fa','#f59e0b','#34d399','#a78bfa','#f87171','#fb923c'];
+
+function loadSites() {
+  const saved = localStorage.getItem(LS_KEY);
+  if (saved) { try { return JSON.parse(saved); } catch(e) {} }
+  return JSON.parse(JSON.stringify(seedSites));
+}
+function save() {
+  localStorage.setItem(LS_KEY, JSON.stringify(state.sites));   // local cache / offline copy
+  if (CLOUD) pushCloud();                                       // fire-and-forget upsert
+}
+
+// ── cloud (single JSON row, last-write-wins) ──
+// ponytail: one row holds the whole sites blob, RLS = authenticated-only. Split into per-row tables only if concurrent edits start clobbering each other.
+let sb = CLOUD ? supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+let pushing = false, session = null;
+const CLOUD_ROW = 'shared';
+async function pushCloud() {
+  if (!sb || pushing) return;
+  pushing = true;
+  const { error } = await sb.from('app_state').upsert({ id: CLOUD_ROW, data: state.sites });
+  pushing = false;
+  if (error) console.warn('cloud save failed:', error.message);
+}
+async function loadCloud() {
+  const { data, error } = await sb.from('app_state').select('data').eq('id', CLOUD_ROW).maybeSingle();
+  if (error) { console.warn('cloud load failed:', error.message); return; }
+  if (data && data.data) { state.sites = data.data; render(); }
+  else { await pushCloud(); }   // first run: seed the row from current local sites
+  sb.channel('app_state')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'app_state', filter: `id=eq.${CLOUD_ROW}` },
+        payload => { if (!pushing && payload.new && payload.new.data) { state.sites = payload.new.data; render(); } })
+    .subscribe();
+}
+
+// ── login gate (email + password; one shared account) ──
+let loginBusy = false, loginErr = '';
+async function doLogin(email, password) {
+  if (!email || !password) { loginErr = 'กรอกอีเมลและรหัสผ่าน'; return renderLogin(); }
+  loginErr = ''; loginBusy = true; renderLogin();
+  const { error } = await sb.auth.signInWithPassword({ email, password });
+  loginBusy = false;
+  if (error) { loginErr = 'เข้าสู่ระบบไม่สำเร็จ — เช็คอีเมล/รหัสผ่าน'; renderLogin(); }
+  // success → onAuthStateChange fires and shows the app
+}
+function renderLogin() {
+  document.getElementById('app').innerHTML = `
+  <div style="min-height:100svh; display:flex; align-items:center; justify-content:center; padding:24px;">
+    <div style="width:100%; max-width:340px;">
+      <div style="text-align:center; margin-bottom:24px;">
+        <div style="font-size:34px; margin-bottom:8px;">🏗️</div>
+        <div style="font-size:20px; font-weight:700; color:#0f172a;">ตารางติดตามงาน</div>
+        <div style="font-size:13px; color:#9ca3af; margin-top:4px;">เข้าสู่ระบบเพื่อใช้งาน</div>
+      </div>
+      <input id="login-email" type="email" autocomplete="username" placeholder="อีเมล" style="${inputStyle} margin-bottom:10px;">
+      <input id="login-pw" type="password" autocomplete="current-password" placeholder="รหัสผ่าน" style="${inputStyle} margin-bottom:14px;">
+      ${loginErr?`<div style="font-size:13px; color:#dc2626; margin-bottom:12px; padding:10px 14px; background:rgba(220,38,38,0.06); border-radius:8px; border:1px solid rgba(220,38,38,0.2);">${esc(loginErr)}</div>`:''}
+      <button id="login-btn" ${loginBusy?'disabled':''} class="btnblue" style="width:100%; background:#2563eb; color:#fff; border:none; border-radius:11px; padding:14px; font-size:16px; font-weight:700; cursor:pointer; opacity:${loginBusy?0.6:1};">${loginBusy?'กำลังเข้า...':'เข้าสู่ระบบ'}</button>
+    </div>
+  </div>`;
+  const go = () => doLogin(document.getElementById('login-email').value.trim(), document.getElementById('login-pw').value);
+  document.getElementById('login-btn').onclick = go;
+  document.getElementById('login-pw').onkeydown = e => { if (e.key==='Enter') go(); };
+}
+
+async function boot() {
+  if (!CLOUD) { render(); return; }   // local-only mode (no creds)
+  sb.auth.onAuthStateChange((_e, s) => {
+    const was = !!session; session = s;
+    if (s && !was) { render(); loadCloud(); }   // just logged in
+    else if (!s && was) { renderLogin(); }       // logged out / expired
+  });
+  const { data } = await sb.auth.getSession();
+  session = data.session;
+  if (session) { render(); loadCloud(); } else { renderLogin(); }
+}
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2,6);
+const today = () => new Date().toISOString().split('T')[0];
+
+const state = {
+  page:'dashboard', filter:'pending', filterMenuOpen:false,
+  expandedSites:{ s1:true }, expandedPersons:{},
+  modal:null, fabOpen:false, validationMsg:'',
+  form:{ name:'', deadline:today(), siteId:'', taskId:'', memberIds:[], newTaskName:'', taskPickerOpen:false, editId:'' },
+  sites: loadSites(),
+};
+
+// ── escaping ──
+const esc = s => String(s==null?'':s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+// ── date helpers ──
+function fmtDate(ts){ const d=new Date(ts); return `${d.getDate()} ${thaiMonths[d.getMonth()]} ${d.getFullYear()+543-2500}`; }
+function fmtDeadline(d){
+  const date=new Date(d+'T00:00:00'); const now=new Date(); now.setHours(0,0,0,0);
+  const diff=Math.round((date-now)/86400000);
+  const lbl=`${date.getDate()} ${thaiMonths[date.getMonth()]}`;
+  if(diff<0)  return { label:`เลย ${-diff} วัน`, u:'overdue' };
+  if(diff===0)return { label:'วันนี้!', u:'overdue' };
+  if(diff<=7) return { label:`${lbl} (อีก ${diff} วัน)`, u:'urgent' };
+  return { label:lbl, u:'normal' };
+}
+const uColor = u => u==='overdue'?'#dc2626' : u==='urgent'?'#d97706' : '#6b7280';
+
+// ── mutations ──
+function markDone(id){ const now=Date.now(); state.sites.forEach(s=>s.tasks.forEach(t=>t.subtasks.forEach(st=>{ if(st.id===id){st.done=true;st.doneAt=now;} }))); save(); render(); }
+function undoDone(id){ state.sites.forEach(s=>s.tasks.forEach(t=>t.subtasks.forEach(st=>{ if(st.id===id){st.done=false;st.doneAt=null;} }))); save(); render(); }
+function deleteSubtask(id){ state.sites.forEach(s=>s.tasks.forEach(t=>t.subtasks=t.subtasks.filter(st=>st.id!==id))); state.modal=null; save(); render(); }
+function deleteMember(siteId,name){ const s=state.sites.find(x=>x.id===siteId); if(s) s.members=s.members.filter(m=>m!==name); save(); render(); }
+function deleteSite(siteId){
+  const site=state.sites.find(x=>x.id===siteId);
+  const pending=site?site.tasks.reduce((a,t)=>a+t.subtasks.filter(st=>!st.done).length,0):0;
+  if(pending>0) return; // guard: only delete fully-done sites
+  state.sites=state.sites.filter(x=>x.id!==siteId); save(); render();
+}
+
+function openModal(type, ctx={}){
+  state.modal=type; state.fabOpen=false; state.validationMsg='';
+  state.form={ name:'', deadline:today(), siteId:ctx.siteId||(state.sites[0]&&state.sites[0].id)||'', taskId:ctx.taskId||'', memberIds:[], newTaskName:'', taskPickerOpen:false, editId:'' };
+  render();
+}
+function openEditTask(id){
+  for(const site of state.sites) for(const task of site.tasks) for(const st of task.subtasks){
+    if(st.id===id){
+      state.modal='editTask'; state.fabOpen=false; state.validationMsg='';
+      state.form={ name:st.name, deadline:st.deadline, siteId:site.id, taskId:task.id, memberIds:[...st.members], newTaskName:'', taskPickerOpen:false, editId:id };
+      render(); return;
+    }
+  }
+}
+function submitModal(){
+  const f=state.form, m=state.modal;
+  const fail = msg => { state.validationMsg=msg; render(); };
+  if(m==='addSite'){
+    if(!f.name.trim()) return fail('กรุณาระบุชื่อไซต์');
+    const c=siteColors[state.sites.length%siteColors.length];
+    state.sites.push({ id:uid(), name:f.name.trim(), color:c.color, colorBg:c.colorBg, members:[], tasks:[] });
+    state.modal=null; state.page='sites';
+  } else if(m==='addTask'){
+    if(!f.siteId) return fail('กรุณาเลือกไซต์');
+    if(!f.name.trim()) return fail('กรุณาระบุชื่อกลุ่มงาน');
+    const s=state.sites.find(x=>x.id===f.siteId); s.tasks.push({ id:uid(), name:f.name.trim(), subtasks:[] });
+    state.modal=null; state.page='sites'; state.expandedSites[f.siteId]=true;
+  } else if(m==='addSubtask'){
+    if(!f.siteId) return fail('กรุณาเลือกไซต์');
+    if(!f.taskId && !f.newTaskName.trim()) return fail('กรุณาเลือกหรือสร้างกลุ่มงาน');
+    if(!f.name.trim()) return fail('กรุณาระบุชื่องานย่อย');
+    if(!f.deadline) return fail('กรุณาเลือกกำหนดส่ง');
+    const sub={ id:uid(), name:f.name.trim(), deadline:f.deadline, members:[...f.memberIds], done:false };
+    const s=state.sites.find(x=>x.id===f.siteId);
+    if(!f.taskId && f.newTaskName.trim()) s.tasks.push({ id:uid(), name:f.newTaskName.trim(), subtasks:[sub] });
+    else s.tasks.find(t=>t.id===f.taskId).subtasks.push(sub);
+    state.modal=null; state.expandedSites[f.siteId]=true;
+  } else if(m==='editTask'){
+    if(!f.name.trim()) return fail('กรุณาระบุชื่องาน');
+    if(!f.deadline) return fail('กรุณาเลือกกำหนดส่ง');
+    const s=state.sites.find(x=>x.id===f.siteId); const t=s.tasks.find(t=>t.id===f.taskId);
+    const st=t.subtasks.find(st=>st.id===f.editId); st.name=f.name.trim(); st.deadline=f.deadline; st.members=[...f.memberIds];
+    state.modal=null;
+  } else if(m==='addMember'){
+    if(!f.siteId) return fail('กรุณาเลือกไซต์');
+    if(!f.name.trim()) return fail('กรุณาระบุชื่อสมาชิก');
+    state.sites.find(x=>x.id===f.siteId).members.push(f.name.trim());
+    state.modal=null;
+  }
+  save(); render();
+}
+
+// ── action dispatch ──
+const actions = {
+  goDashboard: ()=>{ state.page='dashboard'; render(); },
+  goSites:     ()=>{ state.page='sites'; render(); },
+  goPersons:   ()=>{ state.page='persons'; render(); },
+  toggleFilterMenu: ()=>{ state.filterMenuOpen=!state.filterMenuOpen; state.fabOpen=false; render(); },
+  closeFilterMenu:  ()=>{ state.filterMenuOpen=false; render(); },
+  setFilter: el=>{ state.filter=el.dataset.filter; state.filterMenuOpen=false; render(); },
+  toggleFab: ()=>{ state.fabOpen=!state.fabOpen; state.filterMenuOpen=false; render(); },
+  closeFab:  ()=>{ state.fabOpen=false; render(); },
+  markDone:   el=>markDone(el.dataset.id),
+  editTask:   el=>openEditTask(el.dataset.id),
+  toggleSite: el=>{ const id=el.dataset.id; state.expandedSites[id]=!state.expandedSites[id]; render(); },
+  togglePerson: el=>{ const id=el.dataset.id; state.expandedPersons[id]=!state.expandedPersons[id]; render(); },
+  addMember:  el=>openModal('addMember',{ siteId:el.dataset.site }),
+  addTask:    el=>openModal('addTask',{ siteId:el.dataset.site }),
+  addSubtask: el=>openModal('addSubtask',{ siteId:el.dataset.site, taskId:el.dataset.task }),
+  deleteSite: el=>deleteSite(el.dataset.site),
+  deleteMember: el=>deleteMember(el.dataset.site, el.dataset.name),
+  openAddSite:   ()=>openModal('addSite'),
+  openAddTask:   ()=>openModal('addTask'),
+  openAddSubtask:()=>openModal('addSubtask'),
+  openAddMember: ()=>openModal('addMember'),
+  openChoose:    ()=>openModal('choose'),
+  closeModal:    ()=>{ state.modal=null; state.validationMsg=''; render(); },
+  goBackToChoose:()=>{ state.modal='choose'; state.validationMsg=''; render(); },
+  submitModal,
+  toggleFormMember: el=>{ const n=el.dataset.name; const ids=state.form.memberIds; const i=ids.indexOf(n); if(i>=0) ids.splice(i,1); else ids.push(n); render(); },
+  toggleTaskPicker: ()=>{ state.form.taskPickerOpen=!state.form.taskPickerOpen; render(); },
+  selectTaskGroup:  el=>{ state.form.taskId=el.dataset.id; state.form.newTaskName=''; state.form.taskPickerOpen=false; state.validationMsg=''; render(); },
+  markDoneFromEdit: ()=>{ markDone(state.form.editId); state.modal=null; render(); },
+  deleteSubtaskBtn: ()=>deleteSubtask(state.form.editId),
+};
+
+document.getElementById('app').addEventListener('click', e=>{
+  const el=e.target.closest('[data-act]'); if(!el) return;
+  e.stopPropagation();
+  const fn=actions[el.dataset.act]; if(fn) fn(el);
+});
+document.getElementById('app').addEventListener('input', e=>{
+  const el=e.target.closest('[data-field]'); if(!el) return;
+  const field=el.dataset.field;
+  if(field==='siteId'){ state.form.siteId=el.value; state.form.taskId=''; state.form.newTaskName=''; state.form.taskPickerOpen=false; state.validationMsg=''; render(); return; }
+  if(field==='newTaskName'){ state.form.newTaskName=el.value; state.form.taskId=''; state.validationMsg=''; return; } // no re-render: keep focus
+  state.form[field]=el.value; state.validationMsg='';
+});
+
+// ── render ──
+function render(){
+  const { page, sites, filter } = state;
+
+  // flat lists for dashboard
+  const allRaw=[], doneRaw=[];
+  sites.forEach(site=>site.tasks.forEach(task=>task.subtasks.forEach(st=>{
+    (st.done?doneRaw:allRaw).push({ ...st, site, task });
+  })));
+  allRaw.sort((a,b)=>a.deadline.localeCompare(b.deadline));
+  doneRaw.sort((a,b)=>(b.doneAt||0)-(a.doneAt||0));
+
+  const pageTitle = page==='dashboard'?'ภาพรวมงาน':page==='sites'?'ไซต์ก่อสร้าง':'รายบุคคล';
+  const filterLabel = filter==='pending'?'งานที่เหลือ':filter==='done'?'งานที่เสร็จ':'ทั้งหมด';
+
+  let main='';
+  if(page==='dashboard') main=renderDashboard(allRaw, doneRaw);
+  else if(page==='sites') main=renderSites();
+  else main=renderPersons();
+
+  document.getElementById('app').innerHTML = `
+  <div style="min-height:100svh; background:#f8fafc; display:flex; flex-direction:column;">
+    <header style="padding:18px 20px 14px; background:#f8fafc; border-bottom:1px solid #e5e7eb; position:sticky; top:0; z-index:10; display:flex; align-items:center; justify-content:space-between;">
+      <div>
+        <div style="font-size:10px; font-weight:700; letter-spacing:0.12em; color:#9ca3af; text-transform:uppercase; margin-bottom:3px;">ตารางติดตามงาน</div>
+        <div style="font-size:22px; font-weight:700; color:#0f172a; line-height:1.1;">${esc(pageTitle)}</div>
+      </div>
+      <div style="position:relative;">
+        <button data-act="toggleFilterMenu" style="background:#fff; border:1px solid #e2e8f0; border-radius:20px; padding:6px 14px; font-size:13px; font-weight:600; color:#374151; cursor:pointer; display:flex; align-items:center; gap:6px;">
+          <span>${esc(filterLabel)}</span><span style="font-size:10px; color:#9ca3af;">▾</span>
+        </button>
+        ${state.filterMenuOpen?`
+        <div data-act="closeFilterMenu" style="position:fixed; inset:0; z-index:14;"></div>
+        <div style="position:absolute; top:calc(100% + 6px); right:0; background:#fff; border:1px solid #e2e8f0; border-radius:12px; box-shadow:0 4px 16px rgba(0,0,0,0.1); z-index:15; overflow:hidden; min-width:140px;">
+          ${filterBtn('pending','#f59e0b','งานที่เหลือ',false)}
+          ${filterBtn('done','#22c55e','งานที่เสร็จ',true)}
+          ${filterBtn('all','#6b7280','ทั้งหมด',true)}
+        </div>`:''}
+      </div>
+    </header>
+
+    <main style="flex:1; overflow-y:auto; padding:16px 16px 104px; max-width:680px; width:100%; margin:0 auto;">${main}</main>
+
+    <button data-act="toggleFab" style="position:fixed; bottom:90px; right:18px; width:52px; height:52px; border-radius:50%; background:#2563eb; border:none; cursor:pointer; color:#fff; font-size:24px; display:flex; align-items:center; justify-content:center; box-shadow:0 4px 16px rgba(37,99,235,0.2); z-index:31; font-weight:300;">${state.fabOpen?'✕':'+'}</button>
+    ${state.fabOpen?`
+    <div data-act="closeFab" style="position:fixed; inset:0; z-index:29;"></div>
+    <div style="position:fixed; bottom:154px; right:18px; display:flex; flex-direction:column; gap:9px; align-items:flex-end; z-index:30; animation:sheetUp 0.18s ease forwards;">
+      <button data-act="openAddSite" style="${speedBtn}">🏗️ ไซต์ใหม่</button>
+      <button data-act="openAddSubtask" style="${speedBtn}">✏️ สร้างงาน</button>
+      <button data-act="openAddMember" style="${speedBtn}">👤 สมาชิก</button>
+    </div>`:''}
+
+    ${renderModal()}
+
+    <nav style="position:fixed; bottom:0; left:0; right:0; background:#f8fafc; border-top:1px solid #e5e7eb; display:flex; gap:6px; padding:10px 12px; padding-bottom:max(10px,env(safe-area-inset-bottom)); z-index:20;">
+      ${navBtn('goDashboard','📋','ภาพรวม','dashboard')}
+      ${navBtn('goPersons','👷','รายบุคคล','persons')}
+      ${navBtn('goSites','🏗️','ไซต์','sites')}
+    </nav>
+  </div>`;
+}
+
+const speedBtn = "background:#f0f2f5; border:1px solid #d1d5db; border-radius:24px; padding:10px 18px; color:#111827; font-size:14px; font-weight:600; cursor:pointer; display:flex; align-items:center; gap:8px; white-space:nowrap; box-shadow:0 2px 8px rgba(0,0,0,0.08);";
+
+function filterBtn(f, dot, label, border){
+  const sel=state.filter===f;
+  return `<button data-act="setFilter" data-filter="${f}" style="width:100%; padding:11px 16px; background:${sel?'#eff6ff':'transparent'}; border:none; ${border?'border-top:1px solid #f1f5f9;':''} cursor:pointer; font-size:14px; font-weight:600; color:${sel?'#2563eb':'#374151'}; text-align:left; display:flex; align-items:center; gap:8px;"><span style="width:7px; height:7px; border-radius:50%; background:${dot}; flex-shrink:0;"></span>${label}</button>`;
+}
+function navBtn(act, icon, label, pg){
+  const sel=state.page===pg;
+  return `<button data-act="${act}" style="flex:1; background:${sel?'rgba(37,99,235,0.08)':'transparent'}; border:none; cursor:pointer; border-radius:10px; padding:10px 4px; display:flex; flex-direction:column; align-items:center; gap:3px; font-size:11px; font-weight:700; color:${sel?'#2563eb':'#9ca3af'};"><span style="font-size:20px;">${icon}</span><span>${label}</span></button>`;
+}
+function siteTag(name, bg, color, extra=''){
+  return `<span style="font-size:11px; font-weight:700; padding:2px 9px; border-radius:20px; background:${bg}; color:${color}; white-space:nowrap; ${extra}">${esc(name)}</span>`;
+}
+
+// ── DASHBOARD ──
+function renderDashboard(allRaw, doneRaw){
+  const f=state.filter;
+  const overdue  = allRaw.filter(i=>fmtDeadline(i.deadline).u==='overdue');
+  const upcoming = allRaw.filter(i=>fmtDeadline(i.deadline).u!=='overdue');
+  const noPending = f==='done' ? doneRaw.length===0 : allRaw.length===0;
+  const hasOverdue  = f!=='done' && overdue.length>0;
+  const hasUpcoming = f!=='done' && upcoming.length>0;
+  const hasDone     = f!=='pending' && doneRaw.length>0;
+
+  let html='';
+  if(noPending && !hasDone){
+    html += `<div style="text-align:center; padding:80px 20px; color:#9ca3af;"><div style="font-size:56px; margin-bottom:16px;">✅</div><div style="font-size:18px; font-weight:700; color:#6b7280;">งานเสร็จหมดแล้ว!</div><div style="font-size:14px; margin-top:6px;">ไม่มีงานค้างอยู่</div></div>`;
+  }
+  if(hasOverdue){
+    html += `<div style="font-size:11px; font-weight:700; color:#ef4444; letter-spacing:0.08em; text-transform:uppercase; margin-bottom:8px; padding-left:4px;">⚠ เลยกำหนด</div>`;
+    html += overdue.map(i=>dashCard(i,true)).join('');
+    html += `<div style="height:6px;"></div>`;
+  }
+  if(hasUpcoming){
+    if(hasOverdue) html += `<div style="font-size:11px; font-weight:700; color:#9ca3af; letter-spacing:0.08em; text-transform:uppercase; margin-bottom:8px; padding-left:4px;">งานที่ยังค้างอยู่</div>`;
+    html += upcoming.map(i=>dashCard(i,false)).join('');
+  }
+  if(hasDone){
+    html += `<div style="font-size:11px; font-weight:700; color:#22c55e; letter-spacing:0.08em; text-transform:uppercase; margin:16px 0 8px; padding-left:4px;">✓ เสร็จแล้ว</div>`;
+    html += doneRaw.map(dashDoneCard).join('');
+  }
+  return html;
+}
+function dashCard(i, isOverdue){
+  const dl=fmtDeadline(i.deadline);
+  const members=i.members.join(', ')||'—';
+  const border = isOverdue ? 'border:1px solid #fecaca; border-left:3px solid #ef4444;' : 'border:1px solid #e5e7eb;';
+  const dlColor = isOverdue ? '#ef4444' : uColor(dl.u);
+  return `<div class="card" data-act="editTask" data-id="${i.id}" style="background:#fff; ${border} border-radius:12px; padding:14px 16px; margin-bottom:9px; display:flex; gap:13px; align-items:flex-start; cursor:pointer;">
+    <button data-act="markDone" data-id="${i.id}" title="ทำเสร็จแล้ว" style="width:24px; height:24px; border-radius:50%; border:2px solid ${isOverdue?'#fca5a5':'#d1d5db'}; background:transparent; cursor:pointer; flex-shrink:0; margin-top:2px;"></button>
+    <div style="flex:1; min-width:0;">
+      <div style="display:flex; align-items:center; gap:7px; flex-wrap:wrap; margin-bottom:5px;">
+        ${siteTag(i.site.name, i.site.colorBg, i.site.color)}
+        <span style="font-size:11px; color:#9ca3af;">${esc(i.task.name)}</span>
+      </div>
+      <div style="font-size:15px; font-weight:500; color:#374151; line-height:1.4; margin-bottom:7px;">${esc(i.name)}</div>
+      <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+        <span style="font-size:12px; font-weight:${isOverdue?700:600}; color:${dlColor};">${esc(dl.label)}</span>
+        <span style="font-size:12px; color:#9ca3af;">${esc(members)}</span>
+      </div>
+    </div></div>`;
+}
+function dashDoneCard(i){
+  const members=i.members.join(', ')||'—';
+  const doneStr = i.doneAt?`เสร็จเมื่อ ${fmtDate(i.doneAt)}`:'เสร็จแล้ว';
+  return `<div class="card" data-act="editTask" data-id="${i.id}" style="background:#f9fafb; border:1px solid #e5e7eb; border-radius:12px; padding:13px 16px; margin-bottom:8px; display:flex; gap:13px; align-items:flex-start; cursor:pointer; opacity:0.75;">
+    <div style="width:24px; height:24px; border-radius:50%; border:2px solid #86efac; background:rgba(34,197,94,0.1); flex-shrink:0; margin-top:2px; display:flex; align-items:center; justify-content:center;"><span style="font-size:12px; color:#22c55e; font-weight:700;">✓</span></div>
+    <div style="flex:1; min-width:0;">
+      <div style="display:flex; align-items:center; gap:7px; flex-wrap:wrap; margin-bottom:4px;">
+        ${siteTag(i.site.name, i.site.colorBg, i.site.color, 'opacity:0.7;')}
+        <span style="font-size:11px; color:#9ca3af;">${esc(i.task.name)}</span>
+      </div>
+      <div style="font-size:14px; font-weight:500; color:#9ca3af; line-height:1.4; margin-bottom:4px; text-decoration:line-through;">${esc(i.name)}</div>
+      <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+        <span style="font-size:11px; color:#22c55e; font-weight:600;">${esc(doneStr)}</span>
+        <span style="font-size:11px; color:#d1d5db;">${esc(members)}</span>
+      </div>
+    </div></div>`;
+}
+
+// ── SITES ──
+function renderSites(){
+  const f=state.filter;
+  let html = state.sites.map(site=>{
+    const expanded=!!state.expandedSites[site.id];
+    const totalPending=site.tasks.reduce((a,t)=>a+t.subtasks.filter(st=>!st.done).length,0);
+    const groups = site.tasks.map(task=>{
+      const pending=task.subtasks.filter(st=>!st.done).sort((a,b)=>a.deadline.localeCompare(b.deadline));
+      const done = f==='pending'?[]:task.subtasks.filter(st=>st.done).sort((a,b)=>(b.doneAt||0)-(a.doneAt||0));
+      const rows = (f==='done'?done:[...pending,...done]);
+      return { task, pendingCount:pending.length, noSubtasks:pending.length===0&&done.length===0, rows };
+    }).filter(g=>g.rows.length>0 || g.pendingCount===0);
+
+    let inner='';
+    if(expanded){
+      inner += groups.map(g=>`
+        <div style="margin-bottom:18px;">
+          <div style="display:flex; align-items:center; justify-content:space-between; padding-bottom:8px; border-bottom:1px solid #f0f2f5;">
+            <div style="font-size:11px; font-weight:700; letter-spacing:0.09em; text-transform:uppercase; color:#9ca3af;">${esc(g.task.name)}</div>
+            <button data-act="addSubtask" data-site="${site.id}" data-task="${g.task.id}" style="font-size:11px; font-weight:700; color:#3b82f6; background:transparent; border:none; cursor:pointer; padding:2px 6px;">+ งานย่อย</button>
+          </div>
+          ${g.rows.map(st=>siteSubRow(st)).join('')}
+          ${g.noSubtasks?`<div style="font-size:13px; color:#9ca3af; padding:12px 0; text-align:center;">ยังไม่มีงานย่อย</div>`:''}
+        </div>`).join('');
+
+      if(site.members.length){
+        inner += `<div style="margin-bottom:14px; padding-top:4px;">
+          <div style="font-size:10px; font-weight:700; color:#9ca3af; text-transform:uppercase; letter-spacing:0.08em; margin-bottom:8px;">สมาชิก</div>
+          <div style="display:flex; flex-wrap:wrap; gap:6px;">
+          ${site.members.map(m=>`<div style="display:flex; align-items:center; gap:5px; background:#f1f5f9; border:1px solid #e2e8f0; border-radius:20px; padding:4px 6px 4px 10px; font-size:12px; color:#374151; font-weight:600;"><span>${esc(m)}</span><button data-act="deleteMember" data-site="${site.id}" data-name="${esc(m)}" style="width:16px; height:16px; border-radius:50%; border:none; background:transparent; cursor:pointer; color:#9ca3af; font-size:12px; line-height:1; padding:0;">×</button></div>`).join('')}
+          </div></div>`;
+      }
+      inner += `<button data-act="addTask" data-site="${site.id}" style="width:100%; background:transparent; border:1px dashed #d1d5db; border-radius:8px; padding:10px; color:#9ca3af; font-size:13px; font-weight:600; cursor:pointer;">+ เพิ่มกลุ่มงาน</button>`;
+    }
+
+    const totalTasks=groups.reduce((a,g)=>a+g.pendingCount,0);
+    return `<div style="background:#fff; border:1px solid #e5e7eb; border-radius:14px; margin-bottom:12px; overflow:hidden; box-shadow:0 1px 4px rgba(0,0,0,0.05);">
+      <div class="hov" data-act="toggleSite" data-id="${site.id}" style="padding:16px 18px; display:flex; align-items:center; gap:12px; cursor:pointer;">
+        <div style="width:11px; height:11px; border-radius:50%; background:${site.color}; flex-shrink:0;"></div>
+        <div style="flex:1; min-width:0;">
+          <div style="font-size:16px; font-weight:700; color:#111827; margin-bottom:2px;">${esc(site.name)}</div>
+          <div style="font-size:11px; color:#9ca3af; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${esc(site.members.length?site.members.join(' · '):'ยังไม่มีสมาชิก')}</div>
+        </div>
+        <div style="display:flex; align-items:center; gap:8px; flex-shrink:0;">
+          <button data-act="addMember" data-site="${site.id}" title="เพิ่มสมาชิก" style="width:26px; height:26px; border-radius:50%; border:1px solid #e2e8f0; background:transparent; cursor:pointer; color:#6b7280; font-size:13px;">👤</button>
+          ${totalPending===0?`<button data-act="deleteSite" data-site="${site.id}" title="ลบไซต์" style="width:26px; height:26px; border-radius:50%; border:1px solid #fecaca; background:transparent; cursor:pointer; color:#f87171; font-size:13px;">🗑</button>`:''}
+          <span style="font-size:12px; font-weight:700; color:#6b7280; background:#f1f5f9; padding:3px 10px; border-radius:20px;">${totalTasks} งาน</span>
+          <span style="font-size:20px; color:#9ca3af; font-weight:300;">${expanded?'▾':'›'}</span>
+        </div>
+      </div>
+      ${expanded?`<div style="border-top:1px solid #f1f5f9; padding:14px 18px 10px;">${inner}</div>`:''}
+    </div>`;
+  }).join('');
+
+  html += `<button data-act="openAddSite" style="width:100%; background:transparent; border:1px dashed #d1d5db; border-radius:14px; padding:18px; color:#9ca3af; font-size:14px; font-weight:600; cursor:pointer;">🏗️  + เพิ่มไซต์ก่อสร้างใหม่</button>`;
+  return html;
+}
+function siteSubRow(st){
+  const dl=fmtDeadline(st.deadline);
+  const members=st.members.join(', ')||'—';
+  const check = st.done
+    ? `<div style="width:20px; height:20px; border-radius:50%; border:2px solid #86efac; background:rgba(34,197,94,0.1); flex-shrink:0; display:flex; align-items:center; justify-content:center;"><span style="font-size:10px; color:#22c55e; font-weight:700;">✓</span></div>`
+    : `<button data-act="markDone" data-id="${st.id}" style="width:20px; height:20px; border-radius:50%; border:2px solid #d1d5db; background:transparent; cursor:pointer; flex-shrink:0;"></button>`;
+  return `<div class="hov" data-act="editTask" data-id="${st.id}" style="display:flex; align-items:center; gap:10px; padding:11px 0; border-bottom:1px solid #f0f2f5; cursor:pointer; opacity:${st.done?'0.7':'1'};">
+    ${check}
+    <div style="flex:1; min-width:0;">
+      <div style="font-size:14px; color:${st.done?'#9ca3af':'#374151'}; line-height:1.4; margin-bottom:3px; text-decoration:${st.done?'line-through':'none'};">${esc(st.name)}</div>
+      <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+        ${st.done?'':`<span style="font-size:11px; font-weight:700; color:${uColor(dl.u)};">${esc(dl.label)}</span>`}
+        ${st.done&&st.doneAt?`<span style="font-size:11px; color:#22c55e; font-weight:600;">${esc(fmtDate(st.doneAt))}</span>`:''}
+        <span style="font-size:11px; color:#9ca3af;">${esc(members)}</span>
+      </div>
+    </div></div>`;
+}
+
+// ── PERSONS ──
+function renderPersons(){
+  const map={};
+  state.sites.forEach(site=>site.tasks.forEach(task=>task.subtasks.forEach(st=>{
+    const ms=st.members.length?st.members:['ไม่ระบุ'];
+    ms.forEach(m=>{ (map[m]=map[m]||[]).push({ ...st, site, task }); });
+  })));
+  const f=state.filter;
+  const entries=Object.entries(map);
+  let html=entries.map(([name,items],idx)=>{
+    const parts=name.split(' ');
+    const initial=parts.length>1?parts[1].charAt(0):parts[0].charAt(0);
+    const color=personPalette[idx%personPalette.length];
+    const expanded=!!state.expandedPersons[name];
+    const pending=items.filter(i=>!i.done).sort((a,b)=>a.deadline.localeCompare(b.deadline));
+    const done=items.filter(i=>i.done).sort((a,b)=>(b.doneAt||0)-(a.doneAt||0));
+    const rows = f==='done'?done : f==='pending'?pending : [...pending,...done];
+    if(rows.length===0) return '';
+    return `<div style="background:#fff; border:1px solid #e5e7eb; border-radius:14px; margin-bottom:12px; overflow:hidden; box-shadow:0 1px 4px rgba(0,0,0,0.05);">
+      <div class="hov" data-act="togglePerson" data-id="${esc(name)}" style="padding:14px 18px; display:flex; align-items:center; gap:12px; cursor:pointer;">
+        <div style="width:38px; height:38px; border-radius:50%; background:${color}; display:flex; align-items:center; justify-content:center; font-size:17px; font-weight:700; color:#080e1c; flex-shrink:0;">${esc(initial)}</div>
+        <div style="flex:1; min-width:0;">
+          <div style="font-size:15px; font-weight:700; color:#111827; margin-bottom:1px;">${esc(name)}</div>
+          <div style="font-size:11px; color:#9ca3af;">งานที่รับผิดชอบ</div>
+        </div>
+        <div style="display:flex; align-items:center; gap:8px; flex-shrink:0;">
+          <span style="font-size:12px; font-weight:700; color:#6b7280; background:#f1f5f9; padding:3px 10px; border-radius:20px;">${pending.length} งาน</span>
+          <span style="font-size:20px; color:#9ca3af; font-weight:300;">${expanded?'▾':'›'}</span>
+        </div>
+      </div>
+      ${expanded?`<div style="border-top:1px solid #f1f5f9; padding:4px 18px 12px;">${rows.map(personRow).join('')}</div>`:''}
+    </div>`;
+  }).join('');
+  if(!html.trim()) html=`<div style="text-align:center; padding:80px 20px; color:#9ca3af;"><div style="font-size:56px; margin-bottom:16px;">👷</div><div style="font-size:18px; font-weight:700; color:#6b7280;">ยังไม่มีงาน</div></div>`;
+  return html;
+}
+function personRow(i){
+  const dl=fmtDeadline(i.deadline);
+  const check = i.done
+    ? `<div style="width:20px; height:20px; border-radius:50%; border:2px solid #86efac; background:rgba(34,197,94,0.1); flex-shrink:0; display:flex; align-items:center; justify-content:center;"><span style="font-size:10px; color:#22c55e; font-weight:700;">✓</span></div>`
+    : `<button data-act="markDone" data-id="${i.id}" style="width:20px; height:20px; border-radius:50%; border:2px solid #d1d5db; background:transparent; cursor:pointer; flex-shrink:0;"></button>`;
+  return `<div class="hov" data-act="editTask" data-id="${i.id}" style="display:flex; align-items:center; gap:10px; padding:11px 0; border-bottom:1px solid #f0f2f5; cursor:pointer; opacity:${i.done?'0.7':'1'};">
+    ${check}
+    <div style="flex:1; min-width:0;">
+      <div style="display:flex; align-items:center; gap:7px; flex-wrap:wrap; margin-bottom:4px;">${siteTag(i.site.name, i.site.colorBg, i.site.color)}</div>
+      <div style="font-size:14px; color:${i.done?'#9ca3af':'#374151'}; line-height:1.4; margin-bottom:3px; text-decoration:${i.done?'line-through':'none'};">${esc(i.name)}</div>
+      ${i.done?'':`<span style="font-size:11px; font-weight:700; color:${uColor(dl.u)};">${esc(dl.label)}</span>`}
+      ${i.done&&i.doneAt?`<span style="font-size:11px; color:#22c55e; font-weight:600; margin-left:6px;">${esc(fmtDate(i.doneAt))}</span>`:''}
+    </div></div>`;
+}
+
+// ── MODAL ──
+const labelStyle = "font-size:11px; font-weight:700; color:#6b7280; text-transform:uppercase; letter-spacing:0.08em; display:block; margin-bottom:7px;";
+const inputStyle = "background:#f9fafb; border:1px solid #e2e8f0; border-radius:8px; padding:11px 14px; color:#111827; font-size:15px; width:100%; outline:none; display:block;";
+function renderModal(){
+  const m=state.modal; if(!m) return '';
+  let body='';
+  if(m==='choose') body=modalChoose();
+  else if(m==='editTask') body=modalEdit();
+  else body=modalForm();
+  return `<div data-act="closeModal" style="position:fixed; inset:0; background:rgba(0,0,0,0.3); z-index:40; animation:fadeInBg 0.2s ease forwards;"></div>
+  <div style="position:fixed; bottom:0; left:0; right:0; background:#fff; border-radius:20px 20px 0 0; z-index:41; padding:0 20px 40px; animation:sheetUp 0.25s ease forwards; max-height:90svh; overflow-y:auto;">
+    <div style="width:40px; height:4px; background:#f0f2f5; border-radius:2px; margin:14px auto 20px;"></div>
+    ${body}
+  </div>`;
+}
+function valHint(){ return state.validationMsg?`<div style="font-size:13px; color:#dc2626; margin-bottom:12px; padding:10px 14px; background:rgba(220,38,38,0.06); border-radius:8px; border:1px solid rgba(220,38,38,0.2);">${esc(state.validationMsg)}</div>`:''; }
+function memberChips(){
+  const s=state.sites.find(x=>x.id===state.form.siteId);
+  if(!s||!s.members.length) return `<div style="font-size:13px; color:#9ca3af; padding:4px 0;">ยังไม่มีสมาชิกในไซต์นี้</div>`;
+  return `<div style="display:flex; flex-wrap:wrap; gap:7px;">${s.members.map(mname=>{
+    const sel=state.form.memberIds.includes(mname);
+    return `<button data-act="toggleFormMember" data-name="${esc(mname)}" style="padding:6px 13px; border-radius:20px; border:1px solid ${sel?'#93c5fd':'#e2e8f0'}; background:${sel?'#eff6ff':'#f9fafb'}; color:${sel?'#1d4ed8':'#6b7280'}; font-size:13px; font-weight:600; cursor:pointer; display:flex; align-items:center; gap:5px;">${sel?'<span style="font-size:11px;">✓</span>':''}<span>${esc(mname)}</span></button>`;
+  }).join('')}</div>`;
+}
+function modalChoose(){
+  const tile=(act,icon,label)=>`<button data-act="${act}" style="background:#f0f2f5; border:1px solid #d1d5db; border-radius:14px; padding:22px 12px; cursor:pointer; display:flex; flex-direction:column; align-items:center; gap:10px; color:#111827; font-size:14px; font-weight:700;"><span style="font-size:30px;">${icon}</span><span>${label}</span></button>`;
+  return `<div style="font-size:18px; font-weight:700; color:#111827; margin-bottom:20px; text-align:center;">เพิ่มรายการใหม่</div>
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+      ${tile('openAddSite','🏗️','ไซต์ใหม่')}${tile('openAddTask','📁','กลุ่มงาน')}${tile('openAddSubtask','✏️','งานย่อย')}${tile('openAddMember','👤','สมาชิก')}
+    </div>`;
+}
+function modalEdit(){
+  const f=state.form;
+  const s=state.sites.find(x=>x.id===f.siteId)||{};
+  const tg=(s.tasks||[]).find(t=>t.id===f.taskId);
+  return `<div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:20px;">
+      <div style="font-size:18px; font-weight:700; color:#111827;">แก้ไขงาน</div>
+      <button data-act="closeModal" style="width:32px; height:32px; border-radius:50%; border:1px solid #e2e8f0; background:transparent; cursor:pointer; color:#6b7280; font-size:18px;">✕</button>
+    </div>
+    <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:20px;">
+      ${siteTag(s.name||'', s.colorBg||'rgba(107,114,128,0.1)', s.color||'#6b7280')}
+      <span style="font-size:12px; color:#9ca3af;">${esc(tg?tg.name:'')}</span>
+    </div>
+    <div style="margin-bottom:16px;"><label style="${labelStyle}">ชื่องาน</label><input data-field="name" value="${esc(f.name)}" style="${inputStyle}"></div>
+    <div style="margin-bottom:16px;"><label style="${labelStyle}">กำหนดส่ง</label><input type="date" data-field="deadline" value="${esc(f.deadline)}" style="${inputStyle} color-scheme:light;"></div>
+    <div style="margin-bottom:20px;"><label style="${labelStyle}">ผู้รับผิดชอบ</label>${memberChips()}</div>
+    ${valHint()}
+    <button data-act="submitModal" class="btnblue" style="width:100%; background:#2563eb; color:#fff; border:none; border-radius:11px; padding:14px; font-size:16px; font-weight:700; cursor:pointer; margin-bottom:10px;">บันทึก</button>
+    <div style="height:1px; background:#f1f5f9; margin:2px 0 10px;"></div>
+    <button data-act="markDoneFromEdit" style="width:100%; background:transparent; color:#6b7280; border:1px solid #e2e8f0; border-radius:11px; padding:13px; font-size:15px; font-weight:600; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:8px;"><span>✓</span><span>เสร็จงานแล้ว</span></button>
+    <div style="height:1px; background:#f1f5f9; margin:6px 0;"></div>
+    <button data-act="deleteSubtaskBtn" style="width:100%; background:transparent; color:#f87171; border:1px solid #fecaca; border-radius:11px; padding:13px; font-size:15px; font-weight:600; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:8px;"><span>🗑</span><span>ลบงานนี้</span></button>`;
+}
+function modalForm(){
+  const m=state.modal, f=state.form;
+  const titles={ addSite:'เพิ่มไซต์ใหม่', addTask:'เพิ่มกลุ่มงาน', addSubtask:'เพิ่มงานย่อย', addMember:'เพิ่มสมาชิก' };
+  const nameLbl={ addSite:'ชื่อไซต์ก่อสร้าง', addTask:'ชื่อกลุ่มงาน', addSubtask:'ชื่องานย่อย', addMember:'ชื่อ-นามสกุล สมาชิก' };
+  const namePH={ addSite:'เช่น โครงการ The River Phase 2', addTask:'เช่น งานโครงสร้าง', addSubtask:'เช่น เทพื้น ชั้น 5', addMember:'เช่น นายสมชาย ใจดี' };
+  const needsSite = m==='addTask'||m==='addSubtask'||m==='addMember';
+  const selectedSite=state.sites.find(s=>s.id===f.siteId);
+  const taskOptions=selectedSite?selectedSite.tasks:[];
+
+  let html=`<div style="display:flex; align-items:center; gap:12px; margin-bottom:24px;">
+      <button data-act="goBackToChoose" style="width:32px; height:32px; border-radius:50%; border:1px solid #e2e8f0; background:transparent; cursor:pointer; color:#6b7280; font-size:16px;">‹</button>
+      <div style="font-size:18px; font-weight:700; color:#111827;">${esc(titles[m]||'')}</div>
+    </div>`;
+
+  if(needsSite){
+    html+=`<div style="margin-bottom:16px;"><label style="${labelStyle}">ไซต์ก่อสร้าง</label>
+      <select data-field="siteId" style="${inputStyle}">
+        <option value="">-- เลือกไซต์ --</option>
+        ${state.sites.map(s=>`<option value="${s.id}" ${s.id===f.siteId?'selected':''}>${esc(s.name)}</option>`).join('')}
+      </select></div>`;
+  }
+
+  if(m==='addSubtask'){
+    const dispLabel = f.taskId ? ((taskOptions.find(o=>o.id===f.taskId)||{}).name||'') : (f.newTaskName||'เลือกหรือสร้างกลุ่มงาน');
+    const valColor = (f.taskId||f.newTaskName)?'#111827':'#9ca3af';
+    html+=`<div style="margin-bottom:16px;"><label style="${labelStyle}">กลุ่มงาน</label>
+      <div data-act="toggleTaskPicker" style="background:#f9fafb; border:1px solid #e2e8f0; border-radius:${f.taskPickerOpen?'8px 8px 0 0':'8px'}; padding:11px 14px; display:flex; align-items:center; justify-content:space-between; cursor:pointer;">
+        <span style="font-size:15px; color:${valColor};">${esc(dispLabel)}</span><span style="color:#6b7280; font-size:18px;">${f.taskPickerOpen?'▾':'›'}</span>
+      </div>
+      ${f.taskPickerOpen?`<div style="background:#f9fafb; border:1px solid #e2e8f0; border-top:none; border-radius:0 0 8px 8px;">
+        ${taskOptions.map(opt=>{ const sel=f.taskId===opt.id; return `<div data-act="selectTaskGroup" data-id="${opt.id}" style="padding:11px 14px; display:flex; align-items:center; gap:10px; cursor:pointer; border-bottom:1px solid #f0f2f5;"><div style="width:16px; height:16px; border-radius:50%; border:2px solid ${sel?'#2563eb':'#d1d5db'}; display:flex; align-items:center; justify-content:center;">${sel?'<div style="width:7px; height:7px; border-radius:50%; background:#3b82f6;"></div>':''}</div><span style="font-size:14px; color:${sel?'#111827':'#6b7280'};">${esc(opt.name)}</span></div>`; }).join('')}
+        ${f.siteId&&taskOptions.length===0?`<div style="padding:10px 14px; font-size:13px; color:#9ca3af; border-bottom:1px solid #f0f2f5;">ยังไม่มีกลุ่มงานในไซต์นี้</div>`:''}
+        <div style="padding:10px 14px;"><input data-field="newTaskName" value="${esc(f.newTaskName)}" placeholder="+ พิมพ์ชื่อกลุ่มงานใหม่..." style="background:transparent; border:none; padding:2px 0; color:#111827; font-size:14px; width:100%; outline:none;"></div>
+      </div>`:''}
+    </div>`;
+  }
+
+  html+=`<div style="margin-bottom:16px;"><label style="${labelStyle}">${esc(nameLbl[m]||'ชื่อ')}</label><input data-field="name" value="${esc(f.name)}" placeholder="${esc(namePH[m]||'')}" style="${inputStyle}"></div>`;
+
+  if(m==='addSubtask'){
+    html+=`<div style="margin-bottom:16px;"><label style="${labelStyle}">กำหนดส่ง</label><input type="date" data-field="deadline" value="${esc(f.deadline)}" style="${inputStyle} color-scheme:light;"></div>`;
+    html+=`<div style="margin-bottom:16px;"><label style="${labelStyle}">ผู้รับผิดชอบ</label>${memberChips()}</div>`;
+  }
+
+  html+=valHint();
+  html+=`<button data-act="submitModal" class="btnblue" style="width:100%; background:#2563eb; color:#fff; border:none; border-radius:11px; padding:14px; font-size:16px; font-weight:700; cursor:pointer; margin-top:4px;">บันทึก</button>`;
+  return html;
+}
+
+boot();
+</script>
+</body>
+</html>
