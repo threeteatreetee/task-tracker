@@ -465,6 +465,11 @@ function render(){
   else if(page==='sites') main=renderSites();
   else if(page==='materials') main=renderMaterials();
   else main=renderPersons();
+  // bottom inline add-button per page (sites already has its own)
+  const addBtn=(act,label)=>`<button data-act="${act}" style="width:100%; background:transparent; border:1px dashed #d1d5db; border-radius:14px; padding:18px; color:#9ca3af; font-size:14px; font-weight:600; cursor:pointer; margin-top:4px;">${label}</button>`;
+  if(page==='dashboard') main+=addBtn('openAddSubtask','✏️  + เพิ่มงาน');
+  else if(page==='materials') main+=addBtn('openAddMaterial','📦  + เพิ่มวัสดุค้างส่ง');
+  else if(page==='persons') main+=addBtn('openAddMember','👤  + เพิ่มบุคคล');
 
   document.getElementById('app').innerHTML = `
   <div style="min-height:100svh; background:#f8fafc; display:flex; flex-direction:column;">
