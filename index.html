@@ -244,6 +244,12 @@ function openEditMaterial(id){
 }
 function markReceived(id){ const now=Date.now(); state.sites.forEach(s=>(s.materials||[]).forEach(m=>{ if(m.id===id){m.received=true;m.receivedAt=now;} })); save(); render(); }
 function deleteMaterial(id){ state.sites.forEach(s=>{ if(s.materials) s.materials=s.materials.filter(m=>m.id!==id); }); state.modal=null; save(); render(); }
+function deleteGroup(siteId, taskId){
+  const s=state.sites.find(x=>x.id===siteId); if(!s) return;
+  const t=s.tasks.find(x=>x.id===taskId); if(!t) return;
+  if(t.subtasks.some(st=>!st.done)) return;   // guard: only when no pending งานย่อย
+  s.tasks=s.tasks.filter(x=>x.id!==taskId); save(); render();
+}
 function deletePerson(name){
   let pending=0;
   state.sites.forEach(s=>s.tasks.forEach(t=>t.subtasks.forEach(st=>{ if(!st.done && (st.members||[]).includes(name)) pending++; })));
@@ -282,8 +288,16 @@ function submitModal(){
   } else if(m==='editTask'){
     if(!f.name.trim()) return fail('กรุณาระบุชื่องาน');
     if(!f.deadline) return fail('กรุณาเลือกกำหนดส่ง');
-    const s=state.sites.find(x=>x.id===f.siteId); const t=s.tasks.find(t=>t.id===f.taskId);
-    const st=t.subtasks.find(st=>st.id===f.editId); st.name=f.name.trim(); st.deadline=f.deadline; st.members=[...f.memberIds];
+    const s=state.sites.find(x=>x.id===f.siteId);
+    let st=null;   // pull the subtask out of its current group (preserves done/doneAt)
+    s.tasks.forEach(t=>{ const found=t.subtasks.find(x=>x.id===f.editId); if(found){ st=found; t.subtasks=t.subtasks.filter(x=>x.id!==f.editId); } });
+    if(!st) st={ id:f.editId, done:false };
+    st.name=f.name.trim(); st.deadline=f.deadline; st.members=[...f.memberIds];
+    let group;   // resolve target group (pick existing / create new / fallback ไม่ระบุ)
+    if(f.newTaskName.trim()){ group={ id:uid(), name:f.newTaskName.trim(), subtasks:[] }; s.tasks.push(group); }
+    else if(f.taskId){ group=s.tasks.find(t=>t.id===f.taskId); }
+    if(!group){ group=s.tasks.find(t=>t.name==='ไม่ระบุ'); if(!group){ group={ id:uid(), name:'ไม่ระบุ', subtasks:[] }; s.tasks.push(group); } }
+    group.subtasks.push(st);
     state.modal=null;
   } else if(m==='addMember'){
     if(!f.name.trim()) return fail('กรุณาระบุชื่อ');
@@ -369,6 +383,7 @@ const actions = {
   editSite:   el=>openEditSite(el.dataset.site),
   selectColor: el=>{ state.form.color=el.dataset.color; render(); },
   deleteSiteBtn: ()=>deleteSite(state.form.siteId),
+  deleteGroup: el=>deleteGroup(el.dataset.site, el.dataset.task),
   deletePerson: el=>deletePerson(el.dataset.name),
   openAddSite:   ()=>openModal('addSite'),
   openAddTask:   ()=>openModal('addTask'),
@@ -565,7 +580,10 @@ function renderSites(){
         <div style="margin-bottom:18px;">
           <div style="display:flex; align-items:center; justify-content:space-between; padding-bottom:8px; border-bottom:1px solid #f0f2f5;">
             <div style="font-size:11px; font-weight:700; letter-spacing:0.09em; text-transform:uppercase; color:#9ca3af;">${esc(g.task.name)}</div>
-            <button data-act="addSubtask" data-site="${site.id}" data-task="${g.task.id}" style="font-size:11px; font-weight:700; color:#3b82f6; background:transparent; border:none; cursor:pointer; padding:2px 6px;">+ งานย่อย</button>
+            <div style="display:flex; align-items:center; gap:2px; flex-shrink:0;">
+              <button data-act="addSubtask" data-site="${site.id}" data-task="${g.task.id}" style="font-size:11px; font-weight:700; color:#3b82f6; background:transparent; border:none; cursor:pointer; padding:2px 6px;">+ งานย่อย</button>
+              ${g.pendingCount===0?`<button data-act="deleteGroup" data-site="${site.id}" data-task="${g.task.id}" title="ลบกลุ่มงาน" style="font-size:12px; color:#f87171; background:transparent; border:none; cursor:pointer; padding:2px 6px;">🗑</button>`:''}
+            </div>
           </div>
           ${g.rows.map(st=>siteSubRow(st)).join('')}
           ${g.noSubtasks?`<div style="font-size:13px; color:#9ca3af; padding:12px 0; text-align:center;">ยังไม่มีงานย่อย</div>`:''}
@@ -821,18 +839,30 @@ function modalEditSite(){
   else html+=`<div style="font-size:12px; color:#9ca3af; text-align:center; padding:6px;">ลบไม่ได้ — ยังมีงานค้าง ${pending} งาน (ทำให้เสร็จก่อน)</div>`;
   return html;
 }
+function groupPicker(){   // pick existing group / create new — shared by edit-งาน and add-งานย่อย
+  const f=state.form;
+  const site=state.sites.find(s=>s.id===f.siteId);
+  const opts=site?site.tasks:[];
+  const dispLabel=f.taskId?((opts.find(o=>o.id===f.taskId)||{}).name||''):(f.newTaskName||'เลือกหรือสร้างกลุ่มงาน');
+  const valColor=(f.taskId||f.newTaskName)?'#111827':'#9ca3af';
+  return `<div data-act="toggleTaskPicker" style="background:#f9fafb; border:1px solid #e2e8f0; border-radius:${f.taskPickerOpen?'8px 8px 0 0':'8px'}; padding:11px 14px; display:flex; align-items:center; justify-content:space-between; cursor:pointer;">
+      <span style="font-size:15px; color:${valColor};">${esc(dispLabel)}</span><span style="color:#6b7280; font-size:18px;">${f.taskPickerOpen?'▾':'›'}</span>
+    </div>
+    ${f.taskPickerOpen?`<div style="background:#f9fafb; border:1px solid #e2e8f0; border-top:none; border-radius:0 0 8px 8px;">
+      ${opts.map(opt=>{ const sel=f.taskId===opt.id; return `<div data-act="selectTaskGroup" data-id="${opt.id}" style="padding:11px 14px; display:flex; align-items:center; gap:10px; cursor:pointer; border-bottom:1px solid #f0f2f5;"><div style="width:16px; height:16px; border-radius:50%; border:2px solid ${sel?'#2563eb':'#d1d5db'}; display:flex; align-items:center; justify-content:center;">${sel?'<div style="width:7px; height:7px; border-radius:50%; background:#3b82f6;"></div>':''}</div><span style="font-size:14px; color:${sel?'#111827':'#6b7280'};">${esc(opt.name)}</span></div>`; }).join('')}
+      ${opts.length===0?`<div style="padding:10px 14px; font-size:13px; color:#9ca3af; border-bottom:1px solid #f0f2f5;">ยังไม่มีกลุ่มงานในไซต์นี้</div>`:''}
+      <div style="padding:10px 14px;"><input data-field="newTaskName" value="${esc(f.newTaskName)}" placeholder="+ พิมพ์ชื่อกลุ่มงานใหม่..." style="background:transparent; border:none; padding:2px 0; color:#111827; font-size:14px; width:100%; outline:none;"></div>
+    </div>`:''}`;
+}
 function modalEdit(){
   const f=state.form;
   const s=state.sites.find(x=>x.id===f.siteId)||{};
-  const tg=(s.tasks||[]).find(t=>t.id===f.taskId);
   return `<div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:20px;">
       <div style="font-size:18px; font-weight:700; color:#111827;">แก้ไขงาน</div>
       <button data-act="closeModal" style="width:32px; height:32px; border-radius:50%; border:1px solid #e2e8f0; background:transparent; cursor:pointer; color:#6b7280; font-size:18px;">✕</button>
     </div>
-    <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:20px;">
-      ${siteTag(s.name||'', s.colorBg||'rgba(107,114,128,0.1)', s.color||'#6b7280')}
-      <span style="font-size:12px; color:#9ca3af;">${esc(tg?tg.name:'')}</span>
-    </div>
+    <div style="margin-bottom:16px;">${siteTag(s.name||'', s.colorBg||'rgba(107,114,128,0.1)', s.color||'#6b7280')}</div>
+    <div style="margin-bottom:16px;"><label style="${labelStyle}">กลุ่มงาน</label>${groupPicker()}</div>
     <div style="margin-bottom:16px;"><label style="${labelStyle}">ชื่องาน</label><input data-field="name" value="${esc(f.name)}" style="${inputStyle}"></div>
     <div style="margin-bottom:16px;"><label style="${labelStyle}">กำหนดส่ง</label><input type="date" data-field="deadline" value="${esc(f.deadline)}" style="${inputStyle} color-scheme:light;"></div>
     <div style="margin-bottom:20px;"><label style="${labelStyle}">ผู้รับผิดชอบ</label>${memberChips()}</div>
