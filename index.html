@@ -675,6 +675,7 @@ function renderPersons(){
     const expanded=!!state.expandedPersons[name];
     const pending=items.filter(i=>!i.done).sort((a,b)=>a.deadline.localeCompare(b.deadline));
     const done=items.filter(i=>i.done).sort((a,b)=>(b.doneAt||0)-(a.doneAt||0));
+    if(name==='ไม่ระบุ' && pending.length===0) return '';   // drop the unassigned bucket once it has no pending work
     const rows = f==='done'?done : f==='pending'?pending : [...pending,...done];
     const canDelete = pending.length===0 && name!=='ไม่ระบุ';
     return `<div style="background:#fff; border:1px solid #e5e7eb; border-radius:14px; margin-bottom:12px; overflow:hidden; box-shadow:0 1px 4px rgba(0,0,0,0.05);">
