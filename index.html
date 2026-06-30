@@ -180,6 +180,7 @@ function fmtDeadline(d){
   return { label:lbl, u:'normal' };
 }
 const uColor = u => u==='overdue'?'#dc2626' : u==='urgent'?'#d97706' : '#6b7280';
+function hexToRgba(hex, a){ const h=(hex||'#2563eb').replace('#',''); const f=h.length===3?h.split('').map(c=>c+c).join(''):h; const n=parseInt(f,16); return `rgba(${(n>>16)&255},${(n>>8)&255},${n&255},${a})`; }
 
 // ── mutations ──
 function markDone(id){ const now=Date.now(); state.sites.forEach(s=>s.tasks.forEach(t=>t.subtasks.forEach(st=>{ if(st.id===id){st.done=true;st.doneAt=now;} }))); save(); render(); }
@@ -279,7 +280,7 @@ function submitModal(){
   } else if(m==='editSite'){
     if(!f.name.trim()) return fail('กรุณาระบุชื่อไซต์');
     const s=state.sites.find(x=>x.id===f.siteId);
-    if(s){ s.name=f.name.trim(); if(f.color){ s.color=f.color; const c=siteColors.find(x=>x.color===f.color); if(c) s.colorBg=c.colorBg; } }
+    if(s){ s.name=f.name.trim(); if(f.color){ s.color=f.color; s.colorBg=hexToRgba(f.color,0.13); } }
     state.modal=null;
   } else if(m==='addAll'){
     // unified form: create only what's filled; blanks → 'ไม่ระบุ'
@@ -371,6 +372,11 @@ document.getElementById('app').addEventListener('input', e=>{
   if(field==='siteId'){ state.form.siteId=el.value; state.form.taskId=''; state.form.newTaskName=''; state.form.taskPickerOpen=false; state.form.memberIds=[]; state.validationMsg=''; render(); return; }
   if(field==='newTaskName'){ state.form.newTaskName=el.value; state.form.taskId=''; state.validationMsg=''; return; } // no re-render: keep focus
   state.form[field]=el.value; state.validationMsg='';
+});
+// native color picker: re-render on close so swatch/preview reflect the pick (change fires once, not mid-drag)
+document.getElementById('app').addEventListener('change', e=>{
+  const el=e.target.closest('[data-field="color"]'); if(!el) return;
+  state.form.color=el.value; render();
 });
 
 // ── render ──
@@ -779,7 +785,13 @@ function modalEditSite(){
       <button data-act="closeModal" style="width:32px; height:32px; border-radius:50%; border:1px solid #e2e8f0; background:transparent; cursor:pointer; color:#6b7280; font-size:18px;">✕</button>
     </div>
     <div style="margin-bottom:16px;"><label style="${labelStyle}">ชื่อไซต์</label><input data-field="name" value="${esc(f.name)}" style="${inputStyle}"></div>
-    <div style="margin-bottom:20px;"><label style="${labelStyle}">สี</label><div style="display:flex; gap:10px; flex-wrap:wrap;">${siteColors.map(swatch).join('')}</div></div>
+    <div style="margin-bottom:20px;"><label style="${labelStyle}">สี</label>
+      <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+        ${siteColors.map(swatch).join('')}
+        <label title="เลือกสีเอง" style="width:34px; height:34px; border-radius:50%; border:2px dashed #cbd5e1; display:flex; align-items:center; justify-content:center; cursor:pointer; position:relative; overflow:hidden; flex-shrink:0;"><span style="font-size:15px;">🎨</span><input type="color" data-field="color" value="${esc(f.color||'#2563eb')}" style="position:absolute; inset:0; opacity:0; cursor:pointer;"></label>
+      </div>
+      <div style="font-size:12px; color:#9ca3af; margin-top:10px; display:flex; align-items:center; gap:7px;">สีที่เลือก <span style="width:18px; height:18px; border-radius:50%; background:${esc(f.color||'#2563eb')}; display:inline-block; border:1px solid #e5e7eb;"></span> ${esc(f.color||'')}</div>
+    </div>
     ${valHint()}
     <button data-act="submitModal" class="btnblue" style="width:100%; background:#2563eb; color:#fff; border:none; border-radius:11px; padding:14px; font-size:16px; font-weight:700; cursor:pointer;">บันทึก</button>
     <div style="height:1px; background:#f1f5f9; margin:10px 0;"></div>`;
