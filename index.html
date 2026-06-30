@@ -218,6 +218,11 @@ function openEditSite(id){
   state.form={ name:site.name, deadline:today(), siteId:site.id, taskId:'', memberIds:[], newTaskName:'', taskPickerOpen:false, editId:id, qty:'', unit:'', newSiteName:'', newPersonName:'', color:site.color };
   render();
 }
+function openEditPerson(name){
+  state.modal='editPerson'; state.fabOpen=false; state.validationMsg='';
+  state.form={ name, deadline:today(), siteId:'', taskId:'', memberIds:[], newTaskName:'', taskPickerOpen:false, editId:name, qty:'', unit:'', newSiteName:'', newPersonName:'', color:'' };
+  render();
+}
 
 function openModal(type, ctx={}){
   state.modal=type; state.fabOpen=false; state.validationMsg='';
@@ -254,6 +259,7 @@ function deletePerson(name){
   let pending=0;
   state.sites.forEach(s=>s.tasks.forEach(t=>t.subtasks.forEach(st=>{ if(!st.done && (st.members||[]).includes(name)) pending++; })));
   if(pending>0) return;   // guard: only remove people with no pending work (like sites)
+  state.modal=null;
   state.people=state.people.filter(p=>p!==name);
   state.sites.forEach(s=>{   // strip from done assignments + materials so they don't linger
     s.tasks.forEach(t=>t.subtasks.forEach(st=>{ if(st.members) st.members=st.members.filter(m=>m!==name); }));
@@ -327,6 +333,19 @@ function submitModal(){
     const s=state.sites.find(x=>x.id===f.siteId);
     if(s){ s.name=f.name.trim(); if(f.color){ s.color=f.color; s.colorBg=hexToRgba(f.color,0.13); } }
     state.modal=null;
+  } else if(m==='editPerson'){
+    const oldN=f.editId, newN=f.name.trim();
+    if(!newN) return fail('กรุณาระบุชื่อ');
+    if(newN!==oldN){   // rename across roster + every assignment
+      state.people=[...new Set(state.people.map(p=>p===oldN?newN:p))];
+      state.sites.forEach(s=>{
+        s.tasks.forEach(t=>t.subtasks.forEach(st=>{ if(st.members) st.members=[...new Set(st.members.map(x=>x===oldN?newN:x))]; }));
+        (s.materials||[]).forEach(mt=>{ if(mt.members) mt.members=[...new Set(mt.members.map(x=>x===oldN?newN:x))]; });
+        if(s.members) s.members=[...new Set(s.members.map(x=>x===oldN?newN:x))];
+      });
+      if(state.expandedPersons[oldN]){ state.expandedPersons[newN]=true; delete state.expandedPersons[oldN]; }
+    }
+    state.modal=null;
   } else if(m==='addAll'){
     // unified form: create only what's filled; blanks → 'ไม่ระบุ'
     let site = null;
@@ -384,7 +403,9 @@ const actions = {
   selectColor: el=>{ state.form.color=el.dataset.color; render(); },
   deleteSiteBtn: ()=>deleteSite(state.form.siteId),
   deleteGroup: el=>deleteGroup(el.dataset.site, el.dataset.task),
+  editPerson: el=>openEditPerson(el.dataset.name),
   deletePerson: el=>deletePerson(el.dataset.name),
+  deletePersonBtn: ()=>deletePerson(state.form.editId),
   openAddSite:   ()=>openModal('addSite'),
   openAddTask:   ()=>openModal('addTask'),
   openAddSubtask:()=>openModal('addSubtask'),
@@ -659,7 +680,7 @@ function renderPersons(){
           <div style="font-size:11px; color:#9ca3af;">${pending.length?'งานที่รับผิดชอบ':'ว่าง — ไม่มีงานค้าง'}</div>
         </div>
         <div style="display:flex; align-items:center; gap:8px; flex-shrink:0;">
-          ${canDelete?`<button data-act="deletePerson" data-name="${esc(name)}" title="ลบรายชื่อ" style="width:26px; height:26px; border-radius:50%; border:1px solid #fecaca; background:transparent; cursor:pointer; color:#f87171; font-size:13px;">🗑</button>`:''}
+          ${name!=='ไม่ระบุ'?`<button data-act="editPerson" data-name="${esc(name)}" title="แก้ไขชื่อ" style="width:26px; height:26px; border-radius:50%; border:1px solid #e2e8f0; background:transparent; cursor:pointer; color:#6b7280; font-size:12px;">✏️</button>`:''}
           <span style="font-size:12px; font-weight:700; color:#6b7280; background:#f1f5f9; padding:3px 10px; border-radius:20px;">${pending.length} งาน</span>
           <span style="font-size:20px; color:#9ca3af; font-weight:300;">${expanded?'▾':'›'}</span>
         </div>
@@ -759,6 +780,7 @@ function renderModal(){
   if(m==='choose') body=modalChoose();
   else if(m==='addAll') body=modalUnified();
   else if(m==='editSite') body=modalEditSite();
+  else if(m==='editPerson') body=modalEditPerson();
   else if(m==='editTask') body=modalEdit();
   else if(m==='addMaterial'||m==='editMaterial') body=modalMaterial();
   else body=modalForm();
@@ -837,6 +859,23 @@ function modalEditSite(){
     <div style="height:1px; background:#f1f5f9; margin:10px 0;"></div>`;
   if(pending===0) html+=`<button data-act="deleteSiteBtn" style="width:100%; background:transparent; color:#f87171; border:1px solid #fecaca; border-radius:11px; padding:13px; font-size:15px; font-weight:600; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:8px;"><span>🗑</span><span>ลบไซต์นี้</span></button>`;
   else html+=`<div style="font-size:12px; color:#9ca3af; text-align:center; padding:6px;">ลบไม่ได้ — ยังมีงานค้าง ${pending} งาน (ทำให้เสร็จก่อน)</div>`;
+  return html;
+}
+function modalEditPerson(){
+  const f=state.form;
+  let pending=0;
+  state.sites.forEach(s=>s.tasks.forEach(t=>t.subtasks.forEach(st=>{ if(!st.done && (st.members||[]).includes(f.editId)) pending++; })));
+  let html=`<div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:20px;">
+      <div style="font-size:18px; font-weight:700; color:#111827;">แก้ไขรายชื่อ</div>
+      <button data-act="closeModal" style="width:32px; height:32px; border-radius:50%; border:1px solid #e2e8f0; background:transparent; cursor:pointer; color:#6b7280; font-size:18px;">✕</button>
+    </div>
+    <div style="margin-bottom:16px;"><label style="${labelStyle}">ชื่อ-นามสกุล</label><input data-field="name" value="${esc(f.name)}" style="${inputStyle}"></div>
+    <div style="font-size:12px; color:#9ca3af; margin-bottom:16px;">เปลี่ยนชื่อจะอัปเดตทุกงาน/วัสดุที่คนนี้รับผิดชอบให้อัตโนมัติ</div>
+    ${valHint()}
+    <button data-act="submitModal" class="btnblue" style="width:100%; background:#2563eb; color:#fff; border:none; border-radius:11px; padding:14px; font-size:16px; font-weight:700; cursor:pointer;">บันทึก</button>
+    <div style="height:1px; background:#f1f5f9; margin:10px 0;"></div>`;
+  if(pending===0) html+=`<button data-act="deletePersonBtn" style="width:100%; background:transparent; color:#f87171; border:1px solid #fecaca; border-radius:11px; padding:13px; font-size:15px; font-weight:600; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:8px;"><span>🗑</span><span>ลบรายชื่อนี้</span></button>`;
+  else html+=`<div style="font-size:12px; color:#9ca3af; text-align:center; padding:6px;">ลบไม่ได้ — ยังมีงานค้าง ${pending} งาน</div>`;
   return html;
 }
 function groupPicker(){   // pick existing group / create new — shared by edit-งาน and add-งานย่อย
