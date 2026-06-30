@@ -160,7 +160,7 @@ const state = {
   page:'dashboard', filter:'pending', filterMenuOpen:false,
   expandedSites:{ s1:true }, expandedPersons:{},
   modal:null, fabOpen:false, validationMsg:'',
-  form:{ name:'', deadline:today(), siteId:'', taskId:'', memberIds:[], newTaskName:'', taskPickerOpen:false, editId:'' },
+  form:{ name:'', deadline:today(), siteId:'', taskId:'', memberIds:[], newTaskName:'', taskPickerOpen:false, editId:'', qty:'', unit:'' },
   sites: loadSites(),
 };
 
@@ -194,18 +194,29 @@ function deleteSite(siteId){
 
 function openModal(type, ctx={}){
   state.modal=type; state.fabOpen=false; state.validationMsg='';
-  state.form={ name:'', deadline:today(), siteId:ctx.siteId||(state.sites[0]&&state.sites[0].id)||'', taskId:ctx.taskId||'', memberIds:[], newTaskName:'', taskPickerOpen:false, editId:'' };
+  state.form={ name:'', deadline:today(), siteId:ctx.siteId||(state.sites[0]&&state.sites[0].id)||'', taskId:ctx.taskId||'', memberIds:[], newTaskName:'', taskPickerOpen:false, editId:'', qty:'', unit:'' };
   render();
 }
 function openEditTask(id){
   for(const site of state.sites) for(const task of site.tasks) for(const st of task.subtasks){
     if(st.id===id){
       state.modal='editTask'; state.fabOpen=false; state.validationMsg='';
-      state.form={ name:st.name, deadline:st.deadline, siteId:site.id, taskId:task.id, memberIds:[...st.members], newTaskName:'', taskPickerOpen:false, editId:id };
+      state.form={ name:st.name, deadline:st.deadline, siteId:site.id, taskId:task.id, memberIds:[...st.members], newTaskName:'', taskPickerOpen:false, editId:id, qty:'', unit:'' };
       render(); return;
     }
   }
 }
+function openEditMaterial(id){
+  for(const site of state.sites) for(const mat of (site.materials||[])){
+    if(mat.id===id){
+      state.modal='editMaterial'; state.fabOpen=false; state.validationMsg='';
+      state.form={ name:mat.name, deadline:mat.deadline, siteId:site.id, taskId:'', memberIds:[], newTaskName:'', taskPickerOpen:false, editId:id, qty:mat.qty||'', unit:mat.unit||'' };
+      render(); return;
+    }
+  }
+}
+function markReceived(id){ const now=Date.now(); state.sites.forEach(s=>(s.materials||[]).forEach(m=>{ if(m.id===id){m.received=true;m.receivedAt=now;} })); save(); render(); }
+function deleteMaterial(id){ state.sites.forEach(s=>{ if(s.materials) s.materials=s.materials.filter(m=>m.id!==id); }); state.modal=null; save(); render(); }
 function submitModal(){
   const f=state.form, m=state.modal;
   const fail = msg => { state.validationMsg=msg; render(); };
@@ -240,6 +251,24 @@ function submitModal(){
     if(!f.name.trim()) return fail('กรุณาระบุชื่อสมาชิก');
     state.sites.find(x=>x.id===f.siteId).members.push(f.name.trim());
     state.modal=null;
+  } else if(m==='addMaterial'){
+    if(!f.siteId) return fail('กรุณาเลือกไซต์');
+    if(!f.name.trim()) return fail('กรุณาระบุชื่อวัสดุ');
+    if(!f.deadline) return fail('กรุณาเลือกกำหนดส่ง');
+    const s=state.sites.find(x=>x.id===f.siteId);
+    if(!s.materials) s.materials=[];
+    s.materials.push({ id:uid(), name:f.name.trim(), qty:f.qty.trim(), unit:f.unit.trim(), deadline:f.deadline, received:false });
+    state.modal=null; state.page='materials';
+  } else if(m==='editMaterial'){
+    if(!f.siteId) return fail('กรุณาเลือกไซต์');
+    if(!f.name.trim()) return fail('กรุณาระบุชื่อวัสดุ');
+    if(!f.deadline) return fail('กรุณาเลือกกำหนดส่ง');
+    let prev=null;  // pull out (preserve received state); allows moving to another site
+    state.sites.forEach(s=>{ if(s.materials){ const found=s.materials.find(x=>x.id===f.editId); if(found) prev=found; s.materials=s.materials.filter(x=>x.id!==f.editId); } });
+    const s=state.sites.find(x=>x.id===f.siteId);
+    if(!s.materials) s.materials=[];
+    s.materials.push({ id:f.editId, name:f.name.trim(), qty:f.qty.trim(), unit:f.unit.trim(), deadline:f.deadline, received:prev?prev.received:false, receivedAt:prev?prev.receivedAt:undefined });
+    state.modal=null;
   }
   save(); render();
 }
@@ -249,6 +278,7 @@ const actions = {
   goDashboard: ()=>{ state.page='dashboard'; render(); },
   goSites:     ()=>{ state.page='sites'; render(); },
   goPersons:   ()=>{ state.page='persons'; render(); },
+  goMaterials: ()=>{ state.page='materials'; render(); },
   toggleFilterMenu: ()=>{ state.filterMenuOpen=!state.filterMenuOpen; state.fabOpen=false; render(); },
   closeFilterMenu:  ()=>{ state.filterMenuOpen=false; render(); },
   setFilter: el=>{ state.filter=el.dataset.filter; state.filterMenuOpen=false; render(); },
@@ -267,6 +297,7 @@ const actions = {
   openAddTask:   ()=>openModal('addTask'),
   openAddSubtask:()=>openModal('addSubtask'),
   openAddMember: ()=>openModal('addMember'),
+  openAddMaterial: ()=>openModal('addMaterial'),
   openChoose:    ()=>openModal('choose'),
   closeModal:    ()=>{ state.modal=null; state.validationMsg=''; render(); },
   goBackToChoose:()=>{ state.modal='choose'; state.validationMsg=''; render(); },
@@ -276,6 +307,10 @@ const actions = {
   selectTaskGroup:  el=>{ state.form.taskId=el.dataset.id; state.form.newTaskName=''; state.form.taskPickerOpen=false; state.validationMsg=''; render(); },
   markDoneFromEdit: ()=>{ markDone(state.form.editId); state.modal=null; render(); },
   deleteSubtaskBtn: ()=>deleteSubtask(state.form.editId),
+  markReceived: el=>markReceived(el.dataset.id),
+  editMaterial: el=>openEditMaterial(el.dataset.id),
+  markReceivedFromEdit: ()=>{ markReceived(state.form.editId); state.modal=null; render(); },
+  deleteMaterialBtn: ()=>deleteMaterial(state.form.editId),
 };
 
 document.getElementById('app').addEventListener('click', e=>{
@@ -303,12 +338,13 @@ function render(){
   allRaw.sort((a,b)=>a.deadline.localeCompare(b.deadline));
   doneRaw.sort((a,b)=>(b.doneAt||0)-(a.doneAt||0));
 
-  const pageTitle = page==='dashboard'?'ภาพรวมงาน':page==='sites'?'ไซต์ก่อสร้าง':'รายบุคคล';
+  const pageTitle = page==='dashboard'?'ภาพรวมงาน':page==='sites'?'ไซต์ก่อสร้าง':page==='materials'?'วัสดุค้างส่ง':'รายบุคคล';
   const filterLabel = filter==='pending'?'งานที่เหลือ':filter==='done'?'งานที่เสร็จ':'ทั้งหมด';
 
   let main='';
   if(page==='dashboard') main=renderDashboard(allRaw, doneRaw);
   else if(page==='sites') main=renderSites();
+  else if(page==='materials') main=renderMaterials();
   else main=renderPersons();
 
   document.getElementById('app').innerHTML = `
@@ -340,6 +376,7 @@ function render(){
     <div style="position:fixed; bottom:154px; right:18px; display:flex; flex-direction:column; gap:9px; align-items:flex-end; z-index:30; animation:sheetUp 0.18s ease forwards;">
       <button data-act="openAddSite" style="${speedBtn}">🏗️ ไซต์ใหม่</button>
       <button data-act="openAddSubtask" style="${speedBtn}">✏️ สร้างงาน</button>
+      <button data-act="openAddMaterial" style="${speedBtn}">📦 วัสดุค้างส่ง</button>
       <button data-act="openAddMember" style="${speedBtn}">👤 สมาชิก</button>
     </div>`:''}
 
@@ -347,6 +384,7 @@ function render(){
 
     <nav style="position:fixed; bottom:0; left:0; right:0; background:#f8fafc; border-top:1px solid #e5e7eb; display:flex; gap:6px; padding:10px 12px; padding-bottom:max(10px,env(safe-area-inset-bottom)); z-index:20;">
       ${navBtn('goDashboard','📋','ภาพรวม','dashboard')}
+      ${navBtn('goMaterials','📦','วัสดุ','materials')}
       ${navBtn('goPersons','👷','รายบุคคล','persons')}
       ${navBtn('goSites','🏗️','ไซต์','sites')}
     </nav>
@@ -560,6 +598,69 @@ function personRow(i){
 }
 
 // ── MODAL ──
+// ── MATERIALS (วัสดุค้างส่ง) ──
+function renderMaterials(){
+  const f=state.filter;
+  const all=[];
+  state.sites.forEach(site=>(site.materials||[]).forEach(mat=>all.push({ ...mat, site })));
+  const pending=all.filter(m=>!m.received).sort((a,b)=>a.deadline.localeCompare(b.deadline));
+  const received=all.filter(m=>m.received).sort((a,b)=>(b.receivedAt||0)-(a.receivedAt||0));
+  const overdue=pending.filter(m=>fmtDeadline(m.deadline).u==='overdue');
+  const upcoming=pending.filter(m=>fmtDeadline(m.deadline).u!=='overdue');
+  const showPending=f!=='done', showReceived=f!=='pending';
+  const nothing = f==='done'?received.length===0 : f==='pending'?pending.length===0 : all.length===0;
+  if(nothing) return `<div style="text-align:center; padding:80px 20px; color:#9ca3af;"><div style="font-size:56px; margin-bottom:16px;">📦</div><div style="font-size:18px; font-weight:700; color:#6b7280;">ไม่มีวัสดุค้างส่ง</div><div style="font-size:14px; margin-top:6px;">กดปุ่ม + เพื่อเพิ่มวัสดุ</div></div>`;
+  const sec=(label,color,top)=>`<div style="font-size:11px; font-weight:700; color:${color}; letter-spacing:0.08em; text-transform:uppercase; margin:${top} 0 8px; padding-left:4px;">${label}</div>`;
+  let html='';
+  if(showPending && overdue.length){ html+=sec('⚠ เลยกำหนด','#ef4444','0'); html+=overdue.map(m=>materialCard(m,true)).join(''); html+='<div style="height:6px;"></div>'; }
+  if(showPending && upcoming.length){ if(overdue.length) html+=sec('รอส่งมอบ','#9ca3af','0'); html+=upcoming.map(m=>materialCard(m,false)).join(''); }
+  if(showReceived && received.length){ html+=sec('✓ รับแล้ว','#22c55e','16px'); html+=received.map(materialReceivedCard).join(''); }
+  return html;
+}
+function materialCard(m, isOverdue){
+  const dl=fmtDeadline(m.deadline);
+  const qtyStr=[m.qty,m.unit].filter(Boolean).join(' ');
+  const border=isOverdue?'border:1px solid #fecaca; border-left:3px solid #ef4444;':'border:1px solid #e5e7eb;';
+  const dlColor=isOverdue?'#ef4444':uColor(dl.u);
+  return `<div class="card" data-act="editMaterial" data-id="${m.id}" style="background:#fff; ${border} border-radius:12px; padding:14px 16px; margin-bottom:9px; display:flex; gap:13px; align-items:flex-start; cursor:pointer;">
+    <button data-act="markReceived" data-id="${m.id}" title="รับของแล้ว" style="width:24px; height:24px; border-radius:50%; border:2px solid ${isOverdue?'#fca5a5':'#d1d5db'}; background:transparent; cursor:pointer; flex-shrink:0; margin-top:2px;"></button>
+    <div style="flex:1; min-width:0;">
+      <div style="display:flex; align-items:center; gap:7px; flex-wrap:wrap; margin-bottom:5px;">${siteTag(m.site.name, m.site.colorBg, m.site.color)}</div>
+      <div style="font-size:15px; font-weight:500; color:#374151; line-height:1.4; margin-bottom:7px;">${esc(m.name)}${qtyStr?` <span style="color:#6b7280; font-weight:400;">· ${esc(qtyStr)}</span>`:''}</div>
+      <span style="font-size:12px; font-weight:${isOverdue?700:600}; color:${dlColor};">${esc(dl.label)}</span>
+    </div></div>`;
+}
+function materialReceivedCard(m){
+  const qtyStr=[m.qty,m.unit].filter(Boolean).join(' ');
+  const recStr=m.receivedAt?`รับเมื่อ ${fmtDate(m.receivedAt)}`:'รับแล้ว';
+  return `<div class="card" data-act="editMaterial" data-id="${m.id}" style="background:#f9fafb; border:1px solid #e5e7eb; border-radius:12px; padding:13px 16px; margin-bottom:8px; display:flex; gap:13px; align-items:flex-start; cursor:pointer; opacity:0.75;">
+    <div style="width:24px; height:24px; border-radius:50%; border:2px solid #86efac; background:rgba(34,197,94,0.1); flex-shrink:0; margin-top:2px; display:flex; align-items:center; justify-content:center;"><span style="font-size:12px; color:#22c55e; font-weight:700;">✓</span></div>
+    <div style="flex:1; min-width:0;">
+      <div style="display:flex; align-items:center; gap:7px; flex-wrap:wrap; margin-bottom:4px;">${siteTag(m.site.name, m.site.colorBg, m.site.color, 'opacity:0.7;')}</div>
+      <div style="font-size:14px; font-weight:500; color:#9ca3af; line-height:1.4; margin-bottom:4px; text-decoration:line-through;">${esc(m.name)}${qtyStr?` · ${esc(qtyStr)}`:''}</div>
+      <span style="font-size:11px; color:#22c55e; font-weight:600;">${esc(recStr)}</span>
+    </div></div>`;
+}
+function modalMaterial(){
+  const m=state.modal, f=state.form, isEdit=m==='editMaterial';
+  const head = isEdit
+    ? `<div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:20px;"><div style="font-size:18px; font-weight:700; color:#111827;">แก้ไขวัสดุ</div><button data-act="closeModal" style="width:32px; height:32px; border-radius:50%; border:1px solid #e2e8f0; background:transparent; cursor:pointer; color:#6b7280; font-size:18px;">✕</button></div>`
+    : `<div style="display:flex; align-items:center; gap:12px; margin-bottom:24px;"><button data-act="goBackToChoose" style="width:32px; height:32px; border-radius:50%; border:1px solid #e2e8f0; background:transparent; cursor:pointer; color:#6b7280; font-size:16px;">‹</button><div style="font-size:18px; font-weight:700; color:#111827;">เพิ่มวัสดุค้างส่ง</div></div>`;
+  let html=head;
+  html+=`<div style="margin-bottom:16px;"><label style="${labelStyle}">ไซต์ก่อสร้าง</label><select data-field="siteId" style="${inputStyle}"><option value="">-- เลือกไซต์ --</option>${state.sites.map(s=>`<option value="${s.id}" ${s.id===f.siteId?'selected':''}>${esc(s.name)}</option>`).join('')}</select></div>`;
+  html+=`<div style="margin-bottom:16px;"><label style="${labelStyle}">ชื่อวัสดุ</label><input data-field="name" value="${esc(f.name)}" placeholder="เช่น เหล็กเส้น DB12" style="${inputStyle}"></div>`;
+  html+=`<div style="display:flex; gap:10px; margin-bottom:16px;">
+    <div style="flex:1;"><label style="${labelStyle}">จำนวน</label><input data-field="qty" type="number" inputmode="decimal" value="${esc(f.qty)}" placeholder="0" style="${inputStyle}"></div>
+    <div style="flex:1;"><label style="${labelStyle}">หน่วย</label><input data-field="unit" value="${esc(f.unit)}" placeholder="เช่น เส้น, ตัน, ลูก" style="${inputStyle}"></div>
+  </div>`;
+  html+=`<div style="margin-bottom:16px;"><label style="${labelStyle}">กำหนดส่ง</label><input type="date" data-field="deadline" value="${esc(f.deadline)}" style="${inputStyle} color-scheme:light;"></div>`;
+  html+=valHint();
+  html+=`<button data-act="submitModal" class="btnblue" style="width:100%; background:#2563eb; color:#fff; border:none; border-radius:11px; padding:14px; font-size:16px; font-weight:700; cursor:pointer; margin-top:4px;">บันทึก</button>`;
+  if(isEdit) html+=`<div style="height:1px; background:#f1f5f9; margin:10px 0;"></div>
+    <button data-act="markReceivedFromEdit" style="width:100%; background:transparent; color:#6b7280; border:1px solid #e2e8f0; border-radius:11px; padding:13px; font-size:15px; font-weight:600; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:8px; margin-bottom:6px;"><span>✓</span><span>รับของแล้ว</span></button>
+    <button data-act="deleteMaterialBtn" style="width:100%; background:transparent; color:#f87171; border:1px solid #fecaca; border-radius:11px; padding:13px; font-size:15px; font-weight:600; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:8px;"><span>🗑</span><span>ลบวัสดุนี้</span></button>`;
+  return html;
+}
 const labelStyle = "font-size:11px; font-weight:700; color:#6b7280; text-transform:uppercase; letter-spacing:0.08em; display:block; margin-bottom:7px;";
 const inputStyle = "background:#f9fafb; border:1px solid #e2e8f0; border-radius:8px; padding:11px 14px; color:#111827; font-size:15px; width:100%; outline:none; display:block;";
 function renderModal(){
@@ -567,6 +668,7 @@ function renderModal(){
   let body='';
   if(m==='choose') body=modalChoose();
   else if(m==='editTask') body=modalEdit();
+  else if(m==='addMaterial'||m==='editMaterial') body=modalMaterial();
   else body=modalForm();
   return `<div data-act="closeModal" style="position:fixed; inset:0; background:rgba(0,0,0,0.3); z-index:40; animation:fadeInBg 0.2s ease forwards;"></div>
   <div style="position:fixed; bottom:0; left:0; right:0; background:#fff; border-radius:20px 20px 0 0; z-index:41; padding:0 20px 40px; animation:sheetUp 0.25s ease forwards; max-height:90svh; overflow-y:auto;">
@@ -587,7 +689,7 @@ function modalChoose(){
   const tile=(act,icon,label)=>`<button data-act="${act}" style="background:#f0f2f5; border:1px solid #d1d5db; border-radius:14px; padding:22px 12px; cursor:pointer; display:flex; flex-direction:column; align-items:center; gap:10px; color:#111827; font-size:14px; font-weight:700;"><span style="font-size:30px;">${icon}</span><span>${label}</span></button>`;
   return `<div style="font-size:18px; font-weight:700; color:#111827; margin-bottom:20px; text-align:center;">เพิ่มรายการใหม่</div>
     <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
-      ${tile('openAddSite','🏗️','ไซต์ใหม่')}${tile('openAddTask','📁','กลุ่มงาน')}${tile('openAddSubtask','✏️','งานย่อย')}${tile('openAddMember','👤','สมาชิก')}
+      ${tile('openAddSite','🏗️','ไซต์ใหม่')}${tile('openAddTask','📁','กลุ่มงาน')}${tile('openAddSubtask','✏️','งานย่อย')}${tile('openAddMaterial','📦','วัสดุค้างส่ง')}${tile('openAddMember','👤','สมาชิก')}
     </div>`;
 }
 function modalEdit(){
