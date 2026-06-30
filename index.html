@@ -190,7 +190,13 @@ function deleteSite(siteId){
   const site=state.sites.find(x=>x.id===siteId);
   const pending=site?site.tasks.reduce((a,t)=>a+t.subtasks.filter(st=>!st.done).length,0):0;
   if(pending>0) return; // guard: only delete fully-done sites
-  state.sites=state.sites.filter(x=>x.id!==siteId); save(); render();
+  state.sites=state.sites.filter(x=>x.id!==siteId); state.modal=null; save(); render();
+}
+function openEditSite(id){
+  const site=state.sites.find(x=>x.id===id); if(!site) return;
+  state.modal='editSite'; state.fabOpen=false; state.validationMsg='';
+  state.form={ name:site.name, deadline:today(), siteId:site.id, taskId:'', memberIds:[], newTaskName:'', taskPickerOpen:false, editId:id, qty:'', unit:'', newSiteName:'', newPersonName:'', color:site.color };
+  render();
 }
 
 function openModal(type, ctx={}){
@@ -270,6 +276,11 @@ function submitModal(){
     if(!s.materials) s.materials=[];
     s.materials.push({ id:f.editId, name:f.name.trim(), qty:f.qty.trim(), unit:f.unit.trim(), deadline:f.deadline, members:[...f.memberIds], received:prev?prev.received:false, receivedAt:prev?prev.receivedAt:undefined });
     state.modal=null;
+  } else if(m==='editSite'){
+    if(!f.name.trim()) return fail('กรุณาระบุชื่อไซต์');
+    const s=state.sites.find(x=>x.id===f.siteId);
+    if(s){ s.name=f.name.trim(); if(f.color){ s.color=f.color; const c=siteColors.find(x=>x.color===f.color); if(c) s.colorBg=c.colorBg; } }
+    state.modal=null;
   } else if(m==='addAll'){
     // unified form: create only what's filled; blanks → 'ไม่ระบุ'
     let site = null;
@@ -324,6 +335,9 @@ const actions = {
   addTask:    el=>openModal('addTask',{ siteId:el.dataset.site }),
   addSubtask: el=>openModal('addSubtask',{ siteId:el.dataset.site, taskId:el.dataset.task }),
   deleteSite: el=>deleteSite(el.dataset.site),
+  editSite:   el=>openEditSite(el.dataset.site),
+  selectColor: el=>{ state.form.color=el.dataset.color; render(); },
+  deleteSiteBtn: ()=>deleteSite(state.form.siteId),
   deleteMember: el=>deleteMember(el.dataset.site, el.dataset.name),
   openAddSite:   ()=>openModal('addSite'),
   openAddTask:   ()=>openModal('addTask'),
@@ -541,7 +555,7 @@ function renderSites(){
         </div>
         <div style="display:flex; align-items:center; gap:8px; flex-shrink:0;">
           <button data-act="addMember" data-site="${site.id}" title="เพิ่มสมาชิก" style="width:26px; height:26px; border-radius:50%; border:1px solid #e2e8f0; background:transparent; cursor:pointer; color:#6b7280; font-size:13px;">👤</button>
-          ${totalPending===0?`<button data-act="deleteSite" data-site="${site.id}" title="ลบไซต์" style="width:26px; height:26px; border-radius:50%; border:1px solid #fecaca; background:transparent; cursor:pointer; color:#f87171; font-size:13px;">🗑</button>`:''}
+          <button data-act="editSite" data-site="${site.id}" title="แก้ไขไซต์" style="width:26px; height:26px; border-radius:50%; border:1px solid #e2e8f0; background:transparent; cursor:pointer; color:#6b7280; font-size:12px;">✏️</button>
           <span style="font-size:12px; font-weight:700; color:#6b7280; background:#f1f5f9; padding:3px 10px; border-radius:20px;">${totalTasks} งาน</span>
           <span style="font-size:20px; color:#9ca3af; font-weight:300;">${expanded?'▾':'›'}</span>
         </div>
@@ -697,6 +711,7 @@ function renderModal(){
   let body='';
   if(m==='choose') body=modalChoose();
   else if(m==='addAll') body=modalUnified();
+  else if(m==='editSite') body=modalEditSite();
   else if(m==='editTask') body=modalEdit();
   else if(m==='addMaterial'||m==='editMaterial') body=modalMaterial();
   else body=modalForm();
@@ -753,6 +768,24 @@ function modalUnified(){
 
     ${valHint()}
     <button data-act="submitModal" class="btnblue" style="width:100%; background:#2563eb; color:#fff; border:none; border-radius:11px; padding:14px; font-size:16px; font-weight:700; cursor:pointer;">บันทึก</button>`;
+}
+function modalEditSite(){
+  const f=state.form;
+  const site=state.sites.find(x=>x.id===f.siteId)||{};
+  const pending=site.tasks?site.tasks.reduce((a,t)=>a+t.subtasks.filter(st=>!st.done).length,0):0;
+  const swatch=c=>`<button data-act="selectColor" data-color="${c.color}" title="${c.color}" style="width:34px; height:34px; border-radius:50%; background:${c.color}; border:3px solid ${f.color===c.color?'#111827':'#e5e7eb'}; cursor:pointer; flex-shrink:0;"></button>`;
+  let html=`<div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:20px;">
+      <div style="font-size:18px; font-weight:700; color:#111827;">แก้ไขไซต์</div>
+      <button data-act="closeModal" style="width:32px; height:32px; border-radius:50%; border:1px solid #e2e8f0; background:transparent; cursor:pointer; color:#6b7280; font-size:18px;">✕</button>
+    </div>
+    <div style="margin-bottom:16px;"><label style="${labelStyle}">ชื่อไซต์</label><input data-field="name" value="${esc(f.name)}" style="${inputStyle}"></div>
+    <div style="margin-bottom:20px;"><label style="${labelStyle}">สี</label><div style="display:flex; gap:10px; flex-wrap:wrap;">${siteColors.map(swatch).join('')}</div></div>
+    ${valHint()}
+    <button data-act="submitModal" class="btnblue" style="width:100%; background:#2563eb; color:#fff; border:none; border-radius:11px; padding:14px; font-size:16px; font-weight:700; cursor:pointer;">บันทึก</button>
+    <div style="height:1px; background:#f1f5f9; margin:10px 0;"></div>`;
+  if(pending===0) html+=`<button data-act="deleteSiteBtn" style="width:100%; background:transparent; color:#f87171; border:1px solid #fecaca; border-radius:11px; padding:13px; font-size:15px; font-weight:600; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:8px;"><span>🗑</span><span>ลบไซต์นี้</span></button>`;
+  else html+=`<div style="font-size:12px; color:#9ca3af; text-align:center; padding:6px;">ลบไม่ได้ — ยังมีงานค้าง ${pending} งาน (ทำให้เสร็จก่อน)</div>`;
+  return html;
 }
 function modalEdit(){
   const f=state.form;
